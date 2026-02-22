@@ -1789,6 +1789,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 event.accept()
                 return
                 
+            # RESTORED: Hide playlist if clicking outside of it
+            if hasattr(self, "playlist_overlay") and self.playlist_overlay.isVisible() and not getattr(self, "pinned_playlist", False):
+                if not self.playlist_overlay.geometry().contains(event.position().toPoint()):
+                    self.playlist_overlay.hide()
+                    
             # Existing logic for moving the window from the top bar
             if event.position().y() <= 60:
                 self.dragpos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
