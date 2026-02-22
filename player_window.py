@@ -1,12 +1,10 @@
 import os
-import random
-import subprocess
 from pathlib import Path
 
 import math
 import mpv
 
-from PySide6.QtCore import QDateTime, QTime, QTimer, Qt, QThread, Signal, QEvent, QPoint
+from PySide6.QtCore import QDateTime, QTimer, Qt, QEvent, QPoint
 from PySide6.QtGui import QColor, QCursor, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -18,12 +16,13 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QSizeGrip,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QAction
 
 from .settings import (
     load_muted,
@@ -225,6 +224,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.ui_timer.setInterval(100) # Increased frequency from 200ms
         self.ui_timer.timeout.connect(self.force_ui_update)
         self.ui_timer.start()
+
+        self.dragpos = None
+        self._is_resizing = False # Add this
+
 
     def _save_zoom_setting(self):
         config = load_video_settings()
@@ -523,23 +526,38 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def check_mouse_pos(self):
         global_pos = QCursor.pos()
         local_pos = self.mapFromGlobal(global_pos)
+
+        margin = 20  # Use 20 to perfectly match the 20x20 area in mousePressEvent!
+        in_resize_area = (
+            self.rect().contains(local_pos)
+            and local_pos.x() >= self.width() - margin
+            and local_pos.y() >= self.height() - margin
+        )
+        is_resizing = getattr(self, "_is_resizing", False)
         
         # Cursor auto-hide logic
-        if global_pos != self.last_cursor_global_pos:
-            self.last_cursor_global_pos = global_pos
+        if in_resize_area or is_resizing:
             self.cursor_idle_time = 0
-            if self.cursor().shape() == Qt.BlankCursor:
-                self.setCursor(Qt.ArrowCursor)
-                self.video_container.setCursor(Qt.ArrowCursor)
+            if self.cursor().shape() != Qt.SizeFDiagCursor:
+                self.setCursor(Qt.SizeFDiagCursor)
+                self.video_container.setCursor(Qt.SizeFDiagCursor)
         else:
-            if self.rect().contains(local_pos):
-                self.cursor_idle_time += 100
-                if self.cursor_idle_time >= 2500:
-                    if self.cursor().shape() != Qt.BlankCursor:
-                        self.setCursor(Qt.BlankCursor)
-                        self.video_container.setCursor(Qt.BlankCursor)
-            else:
+            if global_pos != self.last_cursor_global_pos:
+                self.last_cursor_global_pos = global_pos
                 self.cursor_idle_time = 0
+                # FIX: If it's the BlankCursor OR the ResizeCursor, turn it back to Arrow
+                if self.cursor().shape() != Qt.ArrowCursor:
+                    self.setCursor(Qt.ArrowCursor)
+                    self.video_container.setCursor(Qt.ArrowCursor)
+            else:
+                if self.rect().contains(local_pos):
+                    self.cursor_idle_time += 100
+                    if self.cursor_idle_time >= 2500:
+                        if self.cursor().shape() != Qt.BlankCursor:
+                            self.setCursor(Qt.BlankCursor)
+                            self.video_container.setCursor(Qt.BlankCursor)
+                else:
+                    self.cursor_idle_time = 0
 
         # Overlay/Transport auto-show (bottom area)
         # ONLY show transport if playlist is hidden to avoid overlapping/blocking playlist buttons
@@ -603,7 +621,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._sync_overlay_geometry()
         self._sync_playlist_overlay_geometry()
         self._sync_speed_indicator_geometry()
-        self._sync_title_bar_geometry()
+        self._sync_title_bar_geometry()            
         super().resizeEvent(event)
 
     def moveEvent(self, event):
@@ -1762,29 +1780,45 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         event.accept()
 
     def mousePressEvent(self, event):
-        # Click outside playlist to close it
-        if hasattr(self, "playlist_overlay") and self.playlist_overlay.isVisible() and not self.pinned_playlist:
-            if not self.playlist_overlay.geometry().contains(QCursor.pos()):
-                self.playlist_overlay.hide()
-        
-        # Dragging logic for frameless window
-        if event.button() == Qt.LeftButton and event.position().y() < 60:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-            return
-
+        if event.button() == Qt.LeftButton:
+            # Check if click is in the bottom-right 20x20 pixel area
+            if event.position().x() >= self.width() - 20 and event.position().y() >= self.height() - 20:
+                self._is_resizing = True
+                self.dragpos = event.globalPosition().toPoint()
+                self._start_size = self.size()
+                event.accept()
+                return
+                
+            # Existing logic for moving the window from the top bar
+            if event.position().y() <= 60:
+                self.dragpos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                event.accept()
+                return
+                
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._drag_pos is not None:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
+        if self.dragpos is not None:
+            if hasattr(self, '_is_resizing') and self._is_resizing:
+                # Handle resizing
+                delta = event.globalPosition().toPoint() - self.dragpos
+                new_width = max(self.minimumWidth(), self._start_size.width() + delta.x())
+                new_height = max(self.minimumHeight(), self._start_size.height() + delta.y())
+                self.resize(new_width, new_height)
+            else:
+                # Existing logic for moving
+                self.move(event.globalPosition().toPoint() - self.dragpos)
+                
             event.accept()
             return
+            
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        self._drag_pos = None
+        self.dragpos = None
+        self._is_resizing = False # Add this
         super().mouseReleaseEvent(event)
+
 
     def keyPressEvent(self, event):
         key = event.key()
