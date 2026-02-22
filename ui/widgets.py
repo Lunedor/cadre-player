@@ -316,24 +316,28 @@ class TitleBarOverlay(QWidget):
 
         # Centered brand label — full-width overlay, mouse-transparent
         # Created LAST so it can be raised above everything else
-        self.brand_label = QLabel("Cadre Player", self)
-        self.brand_label.setAlignment(Qt.AlignCenter)
-        self.brand_label.setStyleSheet("""
-            QLabel {
-                color: rgba(255, 255, 255, 200);
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
-                font-weight: 700;
-                letter-spacing: 1.2px;
-                background: transparent;
-            }
-        """)
-        self.brand_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.brand_container = QWidget(self)
+        self.brand_container.setAttribute(Qt.WA_TransparentForMouseEvents)
+        
+        brand_layout = QHBoxLayout(self.brand_container)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(1)  # Gap between icon and text
+        brand_layout.setAlignment(Qt.AlignCenter)
 
-        # Stacking: bg → _row (buttons) → brand_label
+        # Add the icon
+        from .icons import get_app_icon
+        self.brand_icon = QLabel()
+        self.brand_icon.setPixmap(get_app_icon().pixmap(32, 32))
+        
+        # Add the text
+        self.brand_label = QLabel("Cadre Player")
+        
+        brand_layout.addWidget(self.brand_icon)
+        brand_layout.addWidget(self.brand_label)
+        # Stacking: bg → _row (buttons) → brand_container
         self.bg_panel.lower()
         self._row.raise_()
-        self.brand_label.raise_()  # On top but invisible to mouse
+        self.brand_container.raise_()  # On top but invisible to mouse
 
 
     def mousePressEvent(self, event):
@@ -357,8 +361,8 @@ class TitleBarOverlay(QWidget):
         rect = self.rect()
         self.bg_panel.setGeometry(rect)
         self._row.setGeometry(rect)
-        self.brand_label.setGeometry(rect)
-        self.brand_label.raise_()  # Keep it on top after layout updates
+        self.brand_container.setGeometry(rect)
+        self.brand_container.raise_()  # Keep it on top after layout updates
 
 
 class DragHandle(QWidget):
