@@ -31,7 +31,7 @@ pip install -r requirements.txt
 
 ### 3. MPV Setup (Windows)
 Cadre Player requires `libmpv-2.dll` or `mpv-1.dll`. 
-- If it is missing, download the DLL from [mpv.io](https://mpv.io/installation/) or [shinchiro's builds](https://mpv.splayer.info/).
+- If it is missing, download the DLL from [mpv.io](https://mpv.io/installation/).
 - Place the DLL in the root of the project folder or inside the `py_video` directory.
 
 ## 🚀 Usage
