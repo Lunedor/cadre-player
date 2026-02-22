@@ -293,15 +293,24 @@ QPushButton#CloseBtn:hover {
     background-color: #e81123;
 }
 
+QLabel {
+    color: rgba(255, 255, 255, 200);
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    background: transparent;
+}
+s
 QLabel#AppTitle {
-    font-family: "Segoe UI";
+    font-family: "Segoe UI Semibold", "Segoe UI";
     font-weight: 600;
-    font-size: 13px;
-    color: rgba(255, 255, 255, 230);
-    padding-left: 6px;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 245);
+    padding-left: 8px;
 }
 
 QLabel#AppIcon {
-    padding-left: 10px;
+    padding-left: 12px;
 }
 """
