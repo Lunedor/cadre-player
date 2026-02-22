@@ -41,6 +41,7 @@ Thumbs.db
 *.tmp
 *.reg
 *.spec
+todo.md
 py_video/settings.json
 py_video/resume_info.json
 
