@@ -40,6 +40,7 @@ Thumbs.db
 *.bak
 *.tmp
 *.reg
+*.spec
 py_video/settings.json
 py_video/resume_info.json
 
