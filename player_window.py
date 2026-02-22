@@ -691,6 +691,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         subtitle_exts = {'.srt', '.ass', '.ssa', '.sub', '.vtt'}
         video_files = []
         subtitle_files = []
+        folders = []
         for p in paths:
             if p.is_file():
                 ext = p.suffix.lower()
@@ -698,8 +699,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                     subtitle_files.append(str(p.resolve()))
                 elif self.is_video_file(p):
                     video_files.append(str(p.resolve()))
+            elif p.is_dir():
+                folders.append(p)
+
         # If only subtitle(s) dropped and a video is open, add subtitle(s)
-        if subtitle_files and not video_files:
+        if subtitle_files and not video_files and not folders:
             if self.player.time_pos is not None:
                 for sub in subtitle_files:
                     self.player.command("sub-add", sub)
@@ -708,13 +712,15 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 self.show_status_overlay(tr("Open a video before adding subtitles"))
             return
 
+        # Expand folders to video files
+        if folders:
+            for folder in folders:
+                video_files.extend(self.list_folder_videos(folder, recursive=True))
+
         # If video(s) dropped, handle as before
         if video_files:
-            # Always append. If 1 file, no expansion, play if idle.
-            if len(video_files) == 1:
-                added = [video_files[0]]
-            else:
-                added = self.collect_paths([Path(f) for f in video_files], recursive=True)
+            # Always append. If 1 file or folder, expand and play if idle.
+            added = self.collect_paths([Path(f) for f in video_files], recursive=False) if len(video_files) > 1 else video_files
 
             if not added:
                 return
