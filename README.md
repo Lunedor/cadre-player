@@ -1,3 +1,5 @@
+[![If you are a good person...](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/lunedor)
+
 # Cadre Player
 
 A modern, sleek, and feature-rich video player built with **Python**, **PySide6 (Qt)**, and the **MPV** engine. Cadre Player offers a premium desktop experience with a frameless UI, customizable controls, and a focus on performance.
