@@ -681,7 +681,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
         # Play if nothing currently playing (idle)
         is_idle = self.current_index < 0 or self.player.time_pos is None
-        added = self.append_to_playlist(paths, play_new=True)
+        added = self.append_to_playlist(added, play_new=is_idle)
         self.show_status_overlay(tr("Added {}").format(len(added)))
 
     def is_video_file(self, path: Path) -> bool:
