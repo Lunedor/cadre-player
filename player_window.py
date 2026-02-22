@@ -688,19 +688,41 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         if not paths:
             return
 
-        # Always append. If 1 file, no expansion, play if idle.
-        if len(paths) == 1 and paths[0].is_file() and self.is_video_file(paths[0]):
-            added = [str(paths[0].resolve())]
-        else:
-            added = self.collect_paths(paths, recursive=True)
-
-        if not added:
+        subtitle_exts = {'.srt', '.ass', '.ssa', '.sub', '.vtt'}
+        video_files = []
+        subtitle_files = []
+        for p in paths:
+            if p.is_file():
+                ext = p.suffix.lower()
+                if ext in subtitle_exts:
+                    subtitle_files.append(str(p.resolve()))
+                elif self.is_video_file(p):
+                    video_files.append(str(p.resolve()))
+        # If only subtitle(s) dropped and a video is open, add subtitle(s)
+        if subtitle_files and not video_files:
+            if self.player.time_pos is not None:
+                for sub in subtitle_files:
+                    self.player.command("sub-add", sub)
+                self.show_status_overlay(tr("Subtitle(s) added"))
+            else:
+                self.show_status_overlay(tr("Open a video before adding subtitles"))
             return
 
-        # Play if nothing currently playing (idle)
-        is_idle = self.current_index < 0 or self.player.time_pos is None
-        added = self.append_to_playlist(added, play_new=is_idle)
-        self.show_status_overlay(tr("Added {}").format(len(added)))
+        # If video(s) dropped, handle as before
+        if video_files:
+            # Always append. If 1 file, no expansion, play if idle.
+            if len(video_files) == 1:
+                added = [video_files[0]]
+            else:
+                added = self.collect_paths([Path(f) for f in video_files], recursive=True)
+
+            if not added:
+                return
+
+            # Play if nothing currently playing (idle)
+            is_idle = self.current_index < 0 or self.player.time_pos is None
+            added = self.append_to_playlist(added, play_new=is_idle)
+            self.show_status_overlay(tr("Added {}".format(len(added))))
 
     def is_video_file(self, path: Path) -> bool:
         return is_video_file(path)
