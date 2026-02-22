@@ -1,6 +1,12 @@
 import os
 import sys
+if os.name == "nt":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "lunedor.cadre.player.1.0"
+        )
 from pathlib import Path
+
 
 _HERE = Path(__file__).resolve().parent  # C:\Projects\py-video
 
@@ -50,6 +56,9 @@ def run() -> int:
 
     app = QApplication(sys.argv)
 
+    from ui.icons import get_app_icon
+    app.setWindowIcon(get_app_icon())
+
     SERVER_NAME = "cadre_player_single_instance_server"
     socket = QLocalSocket()
     socket.connectToServer(SERVER_NAME)
@@ -68,12 +77,6 @@ def run() -> int:
     server = QLocalServer()
     server.removeServer(SERVER_NAME)
     server.listen(SERVER_NAME)
-
-    if os.name == "nt":
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "deepmind.cadre.player.1.0"
-        )
 
     player = ProOverlayPlayer()
 
