@@ -61,7 +61,8 @@ QWidget#PlaylistPanel {
 
 QListWidget {
   background: transparent;
-  border: none;
+  border: 1px solid rgba(255,255,255,20);
+  border-radius: 8px;
   color: rgba(255,255,255,255);
   font-family: "Segoe UI";
   font-size: 14px;
@@ -290,5 +291,17 @@ QPushButton:hover {
 }
 QPushButton#CloseBtn:hover {
     background-color: #e81123;
+}
+
+QLabel#AppTitle {
+    font-family: "Segoe UI";
+    font-weight: 600;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 230);
+    padding-left: 6px;
+}
+
+QLabel#AppIcon {
+    padding-left: 10px;
 }
 """
