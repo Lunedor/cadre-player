@@ -1,112 +1,292 @@
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QFontMetrics
+from urllib.parse import parse_qs, unquote
+
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QRect,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+)
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QStyle,
+    QStyledItemDelegate,
     QLabel,
+    QListView,
     QMainWindow,
     QSlider,
-    QStyle,
     QWidget,
-    QListWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QSizePolicy,
-    QFrame,
 )
-from ..i18n import tr
 
 
-class ElidedLabel(QLabel):
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        metrics = QFontMetrics(self.font())
-        # Use floor to avoid pixel bleed
-        width = self.width()
-        if width <= 0: return
-        
-        elided_text = metrics.elidedText(self.text(), Qt.ElideRight, width)
-        painter.setPen(self.palette().color(self.foregroundRole()))
-        painter.drawText(self.rect(), self.alignment() | Qt.AlignVCenter, elided_text)
-
-    def sizeHint(self):
-        hint = super().sizeHint()
-        # Set a very small width hint to allow the layout to compress it
-        hint.setWidth(10)
-        return hint
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.update()
+PLAYLIST_PATH_ROLE = Qt.UserRole + 1
+PLAYLIST_NAME_ROLE = Qt.UserRole + 2
+PLAYLIST_DURATION_ROLE = Qt.UserRole + 3
 
 
-class PlaylistItemWidget(QWidget):
-    def __init__(self, index: int, name: str, duration: str = "--:--", parent=None):
+def _playlist_item_name(path_value: str) -> str:
+    def _basename(value: str) -> str:
+        token = str(value or "").rstrip("/\\")
+        if not token:
+            return ""
+        token = token.rsplit("/", 1)[-1]
+        token = token.rsplit("\\", 1)[-1]
+        return token
+
+    text = str(path_value or "")
+    lowered = text.lower()
+    if lowered.startswith(("http://", "https://")):
+        tail = text.split("://", 1)[1]
+        host = tail.split("/", 1)[0].split("@")[-1]
+        host_lower = host.lower()
+        path_q = tail[len(tail.split("/", 1)[0]):] if "/" in tail else ""
+        path, _, query = path_q.partition("?")
+        if "youtube.com" in host_lower and path == "/watch":
+            vid = parse_qs(query).get("v", [""])[0]
+            return f"YouTube {vid}" if vid else "YouTube"
+        if "youtu.be" in host_lower:
+            vid = path.strip("/")
+            return f"YouTube {vid}" if vid else "YouTube"
+        raw_name = _basename(path)
+        if raw_name:
+            return unquote(raw_name)
+        return host or text
+    return _basename(text) or text
+
+
+class PlaylistListModel(QAbstractListModel):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        # REMOVE WA_TransparentForMouseEvents so tooltips work.
-        # However, we must ensure clicks still select the item in the list.
-        # Qt usually handles this if we don't consume the mouse press.
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(10)
+        self._paths: list[str] = []
+        self._durations: dict[str, str] = {}
+        self._titles: dict[str, str] = {}
+        self._resolved_titles: dict[str, str] = {}
 
-        # Index label
-        self.index_label = QLabel(f"{index:02d}")
-        self.index_label.setObjectName("ItemIndex")
-        self.index_label.setFixedWidth(20)
-        self.index_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(self.index_label)
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+        return len(self._paths)
 
-        # Text container
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._paths):
+            return None
+        path = self._paths[row]
+        if role == Qt.DisplayRole:
+            return path
+        if role == Qt.ToolTipRole:
+            return path
+        if role == PLAYLIST_PATH_ROLE:
+            return path
+        if role == PLAYLIST_NAME_ROLE:
+            return self._titles.get(path, self._resolved_titles.get(path, path))
+        if role == PLAYLIST_DURATION_ROLE:
+            return self._durations.get(path, "--:--")
+        return None
 
-        self.title_label = ElidedLabel(name)
-        self.title_label.setObjectName("ItemTitle")
-        self.title_label.setToolTip(name)
-        # Important: Allow the label to shrink to zero so it doesn't push the layout out
-        self.title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.title_label.setMinimumWidth(0)
-        text_layout.addWidget(self.title_label)
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.ItemIsDropEnabled
+        return (
+            Qt.ItemIsEnabled
+            | Qt.ItemIsSelectable
+            | Qt.ItemIsDragEnabled
+            | Qt.ItemIsDropEnabled
+        )
 
-        self.duration_label = QLabel(duration)
-        self.duration_label.setObjectName("ItemDuration")
-        self.duration_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        text_layout.addWidget(self.duration_label)
+    def supportedDropActions(self):
+        return Qt.MoveAction
 
-        layout.addLayout(text_layout, 1)
+    def moveRows(self, sourceParent, sourceRow, count, destinationParent, destinationChild):
+        if sourceParent.isValid() or destinationParent.isValid():
+            return False
+        if count <= 0:
+            return False
+        if sourceRow < 0 or (sourceRow + count) > len(self._paths):
+            return False
+        if destinationChild < 0 or destinationChild > len(self._paths):
+            return False
+        if destinationChild >= sourceRow and destinationChild <= (sourceRow + count):
+            return False
 
-    def mousePressEvent(self, event):
-        # Forward mouse press to the list widget to ensure selection still works
-        # when clicking anywhere on the item widget
-        if self.parent() and self.parent().parent():
-            # parent().parent() is usually the viewport of the QListWidget
-            # but we can just ignore it and let it bubble if we don't accept it.
-            super().mousePressEvent(event)
-            event.ignore() 
+        self.beginMoveRows(
+            sourceParent, sourceRow, sourceRow + count - 1, destinationParent, destinationChild
+        )
+        moved = self._paths[sourceRow : sourceRow + count]
+        del self._paths[sourceRow : sourceRow + count]
+        if destinationChild > sourceRow:
+            destinationChild -= count
+        for i, value in enumerate(moved):
+            self._paths.insert(destinationChild + i, value)
+        self.endMoveRows()
+        return True
 
-    def sizeHint(self):
-        # Provide a reasonable height for two lines of text
-        hint = super().sizeHint()
-        hint.setHeight(42) # Slightly tighter but enough for 2 lines
-        return hint
+    def set_paths(self, paths: list[str], durations: dict[str, str], titles: dict[str, str] = None):
+        self.beginResetModel()
+        self._paths = list(paths)
+        self._durations = dict(durations)
+        self._titles = dict(titles or {})
+        self._resolved_titles = {p: _playlist_item_name(p) for p in self._paths}
+        self.endResetModel()
+
+    def append_paths(self, paths: list[str], durations: dict[str, str], titles: dict[str, str] = None):
+        if not paths:
+            return
+        start = len(self._paths)
+        end = start + len(paths) - 1
+        self.beginInsertRows(QModelIndex(), start, end)
+        self._paths.extend(paths)
+        self._durations = dict(durations)
+        if titles is not None:
+            self._titles = dict(titles)
+        for p in paths:
+            self._resolved_titles[p] = _playlist_item_name(p)
+        self.endInsertRows()
+
+    def update_duration(self, path: str, duration_text: str):
+        self._durations[path] = duration_text
+        changed = False
+        for row, item_path in enumerate(self._paths):
+            if item_path == path:
+                idx = self.index(row, 0)
+                self.dataChanged.emit(idx, idx, [PLAYLIST_DURATION_ROLE])
+                changed = True
+        return changed
+
+    def update_title(self, path: str, title: str):
+        self._titles[path] = title
+        if path not in self._resolved_titles:
+            self._resolved_titles[path] = _playlist_item_name(path)
+        for row, item_path in enumerate(self._paths):
+            if item_path == path:
+                idx = self.index(row, 0)
+                self.dataChanged.emit(idx, idx, [PLAYLIST_NAME_ROLE])
+
+    def paths(self):
+        return list(self._paths)
+
+
+class PlaylistFilterProxyModel(QSortFilterProxyModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._query = ""
+        self.setDynamicSortFilter(False)
+
+    def set_query(self, query: str):
+        new_query = (query or "").strip().casefold()
+        if new_query == self._query:
+            return
+        self._query = new_query
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        if not self._query:
+            return True
+        model = self.sourceModel()
+        idx = model.index(source_row, 0, source_parent)
+        name = str(model.data(idx, PLAYLIST_NAME_ROLE) or "")
+        return self._query in name.casefold()
+
+
+class PlaylistItemDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = option.rect.adjusted(1, 1, -1, -1)
+        is_selected = bool(option.state & QStyle.State_Selected)
+        is_hovered = bool(option.state & QStyle.State_MouseOver)
+
+        source_row = index.row()
+        model = index.model()
+        if hasattr(model, "mapToSource"):
+            source_row = model.mapToSource(index).row()
+
+        view = option.widget
+        current_row = view.property("current_playlist_index") if view else -1
+        is_current = source_row == current_row
+
+        if is_selected:
+            bg = QColor(255, 255, 255, 36)
+            border = QColor(255, 255, 255, 58)
+        elif is_current:
+            bg = QColor(255, 255, 255, 24)
+            border = QColor(255, 255, 255, 46)
+        elif is_hovered:
+            bg = QColor(255, 255, 255, 18)
+            border = QColor(255, 255, 255, 20)
+        else:
+            bg = QColor(255, 255, 255, 10)
+            border = QColor(255, 255, 255, 14)
+
+        painter.setPen(border)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(rect, 8, 8)
+
+        index_text = f"{source_row + 1:02d}"
+        title = str(index.data(PLAYLIST_NAME_ROLE) or "")
+        duration = str(index.data(PLAYLIST_DURATION_ROLE) or "--:--")
+
+        content = rect.adjusted(8, 4, -8, -4)
+        index_rect = QRect(content.left(), content.top(), 24, content.height())
+        text_rect = QRect(content.left() + 32, content.top(), content.width() - 32, content.height())
+        title_rect = QRect(text_rect.left(), text_rect.top(), text_rect.width(), 19)
+        dur_rect = QRect(text_rect.left(), text_rect.top() + 20, text_rect.width(), 16)
+
+        f_index = QFont("Cascadia Code", 9)
+        f_index.setBold(True)
+        painter.setFont(f_index)
+        painter.setPen(QColor(255, 255, 255, 120))
+        painter.drawText(index_rect, Qt.AlignVCenter | Qt.AlignLeft, index_text)
+
+        f_title = QFont("Segoe UI", 10)
+        f_title.setWeight(QFont.DemiBold)
+        painter.setFont(f_title)
+        painter.setPen(QColor(255, 255, 255, 244))
+        title_elided = painter.fontMetrics().elidedText(title, Qt.ElideRight, title_rect.width())
+        painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, title_elided)
+
+        f_dur = QFont("Segoe UI", 8)
+        painter.setFont(f_dur)
+        painter.setPen(QColor(255, 255, 255, 150))
+        painter.drawText(dur_rect, Qt.AlignVCenter | Qt.AlignLeft, duration)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width(), 42)
 
 
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Calculate value based on click position
-            val = QStyle.sliderValueFromPosition(
-                self.minimum(),
-                self.maximum(),
-                event.position().x(),
-                self.width(),
-            )
-            self.setValue(val)
-            self.sliderMoved.emit(val)
+            if self.orientation() == Qt.Vertical:
+                # Vertical: usually Bottom=Min, Top=Max
+                y = event.position().y()
+                h = self.height()
+                if self.invertedAppearance():
+                    pos_ratio = y / h
+                else:
+                    pos_ratio = 1.0 - (y / h)
+            else:
+                # Horizontal: usually Left=Min, Right=Max
+                x = event.position().x()
+                w = self.width()
+                if self.invertedAppearance():
+                    pos_ratio = 1.0 - (x / w)
+                else:
+                    pos_ratio = x / w
+            
+            val_range = self.maximum() - self.minimum()
+            new_val = self.minimum() + (val_range * pos_ratio)
+            self.setValue(int(round(new_val)))
+            self.sliderMoved.emit(self.value())
         
-        # Call super to allow default behavior (like starting a drag)
-        # Since we just set the value, the handle will be under the cursor
-        # and QSlider will start a drag operation.
         super().mousePressEvent(event)
 
 
@@ -184,14 +364,18 @@ class OverlayWindow(QWidget):
             super().dropEvent(event)
 
 
-class PlaylistWidget(QListWidget):
+class PlaylistWidget(QListView):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setSelectionMode(QListWidget.ExtendedSelection)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QListWidget.InternalMove)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
         self.setDefaultDropAction(Qt.MoveAction)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setUniformItemSizes(True)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setMouseTracking(True)
 
 
     def dragEnterEvent(self, event):
@@ -218,13 +402,22 @@ class PlaylistWidget(QListWidget):
             super().dropEvent(event)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Delete:
+        if event.key() in (Qt.Key_Enter, Qt.Key_Return):
+            curr = self.parent()
+            while curr and (not hasattr(curr, "owner")):
+                curr = curr.parent()
+            if curr and hasattr(curr.owner, "play_selected_item"):
+                curr.owner.play_selected_item()
+        elif event.key() == Qt.Key_Delete:
             # Find the main window to call remove
             curr = self.parent()
             while curr and (not hasattr(curr, "owner")):
                 curr = curr.parent()
-            if curr and hasattr(curr.owner, "remove_selected_from_playlist"):
-                curr.owner.remove_selected_from_playlist()
+            if curr:
+                if event.modifiers() & Qt.ShiftModifier and hasattr(curr.owner, "delete_to_trash"):
+                    curr.owner.delete_to_trash()
+                elif hasattr(curr.owner, "remove_selected_from_playlist"):
+                    curr.owner.remove_selected_from_playlist()
         else:
             super().keyPressEvent(event)
 
@@ -274,7 +467,7 @@ class TitleBarOverlay(QWidget):
     def __init__(self, owner: QMainWindow):
         super().__init__(owner)
         self.owner = owner
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setMouseTracking(True)
@@ -321,13 +514,13 @@ class TitleBarOverlay(QWidget):
         
         brand_layout = QHBoxLayout(self.brand_container)
         brand_layout.setContentsMargins(0, 0, 0, 0)
-        brand_layout.setSpacing(1)  # Gap between icon and text
+        brand_layout.setSpacing(4)  # Gap between icon and text
         brand_layout.setAlignment(Qt.AlignCenter)
 
         # Add the icon
         from .icons import get_app_icon
         self.brand_icon = QLabel()
-        self.brand_icon.setPixmap(get_app_icon().pixmap(32, 32))
+        self.brand_icon.setPixmap(get_app_icon().pixmap(26, 26))
         
         # Add the text
         self.brand_label = QLabel("Cadre Player")
@@ -411,5 +604,3 @@ class IconButton(QPushButton):
             self.setIcon(icon)
         if checkable:
             self.setCheckable(True)
-
-

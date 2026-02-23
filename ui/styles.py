@@ -5,9 +5,9 @@ QPushButton {
   color: rgba(255,255,255,230);
   border-radius: 8px;
   qproperty-iconSize: 22px 22px;
-  padding: 7px;
-  min-width: 36px;
-  min-height: 36px;
+  padding: 3px;
+  min-width: 20px;
+  min-height: 20px;
 }
 QPushButton:hover { 
   background: rgba(255,255,255,20); 
@@ -45,10 +45,10 @@ QSlider::add-page:horizontal {
 }
 QSlider::handle:horizontal {
   background: rgba(255,255,255,230);
-  width: 10px;
-  height: 10px;
-  border-radius: 5px;
-  margin: -3px 0px;
+  width: 6px;
+  height: 16px;
+  border-radius: 2px;
+  margin: -6px 0px;
 }
 """
 
@@ -59,7 +59,7 @@ QWidget#PlaylistPanel {
   border-radius: 12px;
 }
 
-QListWidget {
+QListView {
   background: transparent;
   border: 1px solid rgba(255,255,255,20);
   border-radius: 8px;
@@ -70,39 +70,19 @@ QListWidget {
   padding-right: 4px;
 }
 
-QListWidget::item {
-  background: rgba(255,255,255,6);
+QLineEdit {
+  background: rgba(255,255,255,10);
+  border: 1px solid rgba(255,255,255,24);
   border-radius: 8px;
-  margin-bottom: 2px;
-  padding: 0px;
+  color: rgba(255,255,255,230);
+  padding: 4px 8px;
+  font-family: "Segoe UI";
+  font-size: 12px;
 }
 
-QListWidget::item:selected {
-  background: rgba(255,255,255,20);
-  border: 1px solid rgba(255,255,255,30);
-}
-
-QListWidget::item:hover {
-  background: rgba(255,255,255,12);
-}
-
-/* Custom Item Widget Styles */
-QLabel#ItemTitle {
-  color: rgba(255,255,255,255);
-  font-weight: 600;
-  font-size: 13px;
-}
-
-QLabel#ItemDuration {
-  color: rgba(255,255,255,140);
-  font-size: 11px;
-}
-
-QLabel#ItemIndex {
-  color: rgba(255,255,255,100);
-  font-family: "Cascadia Code", "Consolas", monospace;
-  font-size: 11px;
-  font-weight: 600;
+QLineEdit:focus {
+  border: 1px solid rgba(255,255,255,40);
+  background: rgba(255,255,255,14);
 }
 
 /* Custom ScrollBar Styling */
@@ -180,6 +160,18 @@ QLabel {
     font-size: 13px;
 }
 
+QCheckBox {
+    color: rgba(255, 255, 255, 220);
+    font-family: "Segoe UI";
+    font-size: 13px;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+}
+
 QGroupBox {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -196,6 +188,18 @@ QComboBox {
     border-radius: 6px;
     padding: 6px 10px;
     color: white;
+}
+
+QLineEdit {
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    padding: 7px 9px;
+    color: white;
+}
+
+QLineEdit:focus {
+    border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
 QComboBox:hover {
@@ -215,10 +219,28 @@ QSlider::groove:horizontal {
     border-radius: 2px;
 }
 
+QSlider::groove:vertical {
+    background: rgba(255, 255, 255, 0.1);
+    width: 4px;
+    border-radius: 2px;
+}
+
+QSlider::handle:vertical {
+    background: rgba(255,255,255,230);
+    height: 6px;
+    width: 16px;
+    margin: 0 -5px;
+    border-radius: 7px;
+}
+
+QSlider::handle:vertical:hover {
+    background: rgba(255,255,255,255);
+}
+
 QSlider::handle:horizontal {
-    background: #4f6bff;
-    width: 14px;
-    height: 14px;
+    background: rgba(255,255,255,230);
+    width: 6px;
+    height: 16px;
     margin: -5px 0;
     border-radius: 7px;
 }
@@ -237,12 +259,12 @@ QPushButton:hover {
 }
 
 QPushButton#PrimaryButton {
-    background-color: #3d5afe;
+    background-color: rgba(100, 100, 100, 0.6);
     border: none;
 }
 
 QPushButton#PrimaryButton:hover {
-    background-color: #536dfe;
+    background-color: rgba(100, 100, 100, 0.9);
 }
 
 /* Minus/Plus Small Buttons */
@@ -280,7 +302,7 @@ QPushButton {
     background-color: transparent;
     border: none;
     border-radius: 0px;
-    padding: 7px;
+    padding: 10px;
     margin: 0px;
     qproperty-iconSize: 18px 18px;
     min-width: 0px;

@@ -4,6 +4,9 @@ import subprocess
 from pathlib import Path
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov", ".webm")
+AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".alac", ".aiff")
+def is_audio_file(path: Path) -> bool:
+    return path.suffix.lower() in AUDIO_EXTENSIONS
 SPEED_STEPS = (0.5, 0.75, 1.0, 1.5, 2.0)
 REPEAT_OFF = 0
 REPEAT_ONE = 1
@@ -49,34 +52,64 @@ def format_duration(seconds: float) -> str:
 def is_video_file(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_EXTENSIONS
 
-def list_folder_videos(folder: Path, recursive: bool = False) -> list[str]:
+def list_folder_media(folder: Path, recursive: bool = False) -> list[str]:
     if not folder.exists() or not folder.is_dir():
         return []
     
     if recursive:
-        # Recursive search using glob patterns
-        all_videos = []
-        for ext in VIDEO_EXTENSIONS:
-            all_videos.extend(folder.rglob(f"*{ext}"))
-            all_videos.extend(folder.rglob(f"*{ext.upper()}"))
-        # Sort by path for a consistent experience
-        return [str(p.resolve()) for p in sorted(all_videos, key=lambda p: str(p).lower())]
+        all_media = []
+        for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS:
+            all_media.extend(folder.rglob(f"*{ext}"))
+            all_media.extend(folder.rglob(f"*{ext.upper()}"))
+        return [str(p.resolve()) for p in sorted(all_media, key=lambda p: str(p).lower())]
     else:
-        # Non-recursive (shallow) search
         return [
             str(item.resolve())
             for item in sorted(folder.iterdir(), key=lambda p: p.name.lower())
-            if item.is_file() and is_video_file(item)
+            if item.is_file() and (is_video_file(item) or is_audio_file(item))
         ]
 
-def collect_paths(paths: list[Path], recursive: bool = False) -> list[str]:
+def collect_paths(
+    paths: list[Path],
+    recursive: bool = False,
+    progress_cb=None,
+    progress_step: int = 100,
+) -> list[str]:
     files = []
+    pending_emit = 0
+
+    def maybe_emit(force: bool = False):
+        nonlocal pending_emit
+        if progress_cb is None:
+            return
+        if force or pending_emit >= max(1, int(progress_step)):
+            progress_cb(len(files))
+            pending_emit = 0
+
     for path in paths:
         resolved = path.resolve()
-        if resolved.is_file() and is_video_file(resolved):
+        if resolved.is_file() and (is_video_file(resolved) or is_audio_file(resolved)):
             files.append(str(resolved))
+            pending_emit += 1
+            maybe_emit()
         elif resolved.is_dir():
-            files.extend(list_folder_videos(resolved, recursive=recursive))
+            if recursive:
+                for root, dirs, filenames in os.walk(resolved):
+                    dirs.sort(key=lambda d: d.lower())
+                    filenames.sort(key=lambda f: f.lower())
+                    for filename in filenames:
+                        full_path = Path(root) / filename
+                        if is_video_file(full_path) or is_audio_file(full_path):
+                            files.append(str(full_path.resolve()))
+                            pending_emit += 1
+                            maybe_emit()
+            else:
+                for item in sorted(resolved.iterdir(), key=lambda p: p.name.lower()):
+                    if item.is_file() and (is_video_file(item) or is_audio_file(item)):
+                        files.append(str(item.resolve()))
+                        pending_emit += 1
+                        maybe_emit()
+    maybe_emit(force=True)
     return files
 
 def reveal_path(path: str):

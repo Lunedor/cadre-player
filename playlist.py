@@ -1,5 +1,6 @@
 import os
 import subprocess
+import tempfile
 from PySide6.QtCore import QThread, Signal
 from .utils import format_duration
 
@@ -13,6 +14,8 @@ class DurationScanner(QThread):
 
     def run(self):
         for path in self.paths:
+            if self.isInterruptionRequested():
+                break
             try:
                 flags = 0
                 if os.name == "nt":
@@ -25,7 +28,25 @@ class DurationScanner(QThread):
                     "-of", "default=noprint_wrappers=1:nokey=1", 
                     path
                 ]
-                result = subprocess.check_output(cmd, stderr=subprocess.STDOUT, creationflags=flags).decode().strip()
+                fd, out_path = tempfile.mkstemp(prefix="cadre_ffprobe_", suffix=".txt")
+                os.close(fd)
+                try:
+                    with open(out_path, "wb") as out_f:
+                        subprocess.run(
+                            cmd,
+                            stdout=out_f,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=flags,
+                            timeout=8,
+                            check=False,
+                        )
+                    with open(out_path, "r", encoding="utf-8", errors="ignore") as in_f:
+                        result = in_f.read().strip()
+                finally:
+                    try:
+                        os.remove(out_path)
+                    except Exception:
+                        pass
                 if result:
                     seconds = float(result)
                     dur_str = format_duration(seconds)

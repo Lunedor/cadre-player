@@ -1,6 +1,7 @@
 from pathlib import Path
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPixmap, QPen, QIcon
+import math
+from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPixmap, QPen, QIcon, QFont
 
 
 def icon_play(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
@@ -12,15 +13,15 @@ def icon_play(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     painter.setBrush(QBrush(color))
 
     path = QPainterPath()
-    pad = int(size * 0.20)
+    pad = size * 0.25 # Increased padding for better balance
+    # Use floats for the points
     path.moveTo(pad, pad)
-    path.lineTo(size - pad, size // 2)
+    path.lineTo(size - pad, size / 2.0)
     path.lineTo(pad, size - pad)
     path.closeSubpath()
     painter.drawPath(path)
     painter.end()
     return pm
-
 
 def icon_pause(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     pm = QPixmap(size, size)
@@ -30,13 +31,15 @@ def icon_pause(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
     painter.setPen(Qt.NoPen)
     painter.setBrush(QBrush(color))
 
-    width = int(size * 0.22)
-    gap = int(size * 0.12)
-    height = int(size * 0.62)
-    y = (size - height) // 2
-    x1 = (size - (2 * width + gap)) // 2
-    painter.drawRoundedRect(x1, y, width, height, 2, 2)
-    painter.drawRoundedRect(x1 + width + gap, y, width, height, 2, 2)
+    w = size * 0.20
+    g = size * 0.15
+    h = size * 0.60
+    # Center the group of two bars
+    x_start = (size - (2 * w + g)) / 2.0
+    y_start = (size - h) / 2.0
+    
+    painter.drawRoundedRect(QRectF(x_start, y_start, w, h), 1.5, 1.5)
+    painter.drawRoundedRect(QRectF(x_start + w + g, y_start, w, h), 1.5, 1.5)
     painter.end()
     return pm
 
@@ -49,7 +52,7 @@ def icon_prev_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
     p.setPen(Qt.NoPen)
     p.setBrush(QBrush(color))
 
-    pad = int(size * 0.22)
+    pad = int(size * 0.25)
     mid = size // 2
 
     # Bar on the left
@@ -81,7 +84,7 @@ def icon_next_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
     p.setPen(Qt.NoPen)
     p.setBrush(QBrush(color))
 
-    pad = int(size * 0.22)
+    pad = int(size * 0.25)
     mid = size // 2
 
     # Bar on the right
@@ -110,22 +113,23 @@ def icon_volume(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixma
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QBrush(color))
+    
+    # Body
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(size * 0.1, size * 0.35, size * 0.2, size * 0.3), 1, 1)
+    path.moveTo(size * 0.3, size * 0.35)
+    path.lineTo(size * 0.55, size * 0.15)
+    path.lineTo(size * 0.55, size * 0.85)
+    path.lineTo(size * 0.3, size * 0.65)
+    painter.fillPath(path, color)
 
-    body = QPainterPath()
-    body.addRoundedRect(size * 0.12, size * 0.34, size * 0.20, size * 0.32, 1.5, 1.5)
-    body.moveTo(size * 0.32, size * 0.34)
-    body.lineTo(size * 0.56, size * 0.18)
-    body.lineTo(size * 0.56, size * 0.82)
-    body.lineTo(size * 0.32, size * 0.66)
-    body.closeSubpath()
-    painter.drawPath(body)
-
-    painter.setPen(color)
-    painter.setBrush(Qt.NoBrush)
-    painter.drawArc(int(size * 0.54), int(size * 0.30), int(size * 0.22), int(size * 0.40), -45 * 16, 90 * 16)
-    painter.drawArc(int(size * 0.52), int(size * 0.20), int(size * 0.34), int(size * 0.60), -45 * 16, 90 * 16)
+    # Arcs (Rings)
+    pen = QPen(color, max(1.2, size * 0.07))
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    # Use QRectF for smooth arcs
+    painter.drawArc(QRectF(size * 0.4, size * 0.3, size * 0.3, size * 0.4), -45 * 16, 90 * 16)
+    painter.drawArc(QRectF(size * 0.35, size * 0.2, size * 0.5, size * 0.6), -45 * 16, 90 * 16)
     painter.end()
     return pm
 
@@ -148,28 +152,31 @@ def icon_volume_muted(size: int = 18, color: QColor = QColor(235, 235, 235)) -> 
 def icon_playlist(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
+    
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    pen = painter.pen()
-    pen.setColor(color)
+    
+    # Using setWidthF for sub-pixel thickness
+    pen = QPen(color)
     pen.setWidthF(max(1.6, size * 0.10))
     pen.setCapStyle(Qt.RoundCap)
     painter.setPen(pen)
-    x0 = int(size * 0.18)
-    x1 = int(size * 0.82)
-    for y in (0.24, 0.50, 0.76):
-        yy = int(size * y)
-        painter.drawLine(x0, yy, x1, yy)
+    
+    # Use floats for horizontal start/end
+    x0 = size * 0.20
+    x1 = size * 0.85
+    
+    # Define vertical positions as floats
+    # 0.3, 0.5, 0.7 provides perfectly symmetrical distribution
+    for y_percent in (0.25, 0.50, 0.75):
+        yy = size * y_percent
+        painter.drawLine(QPointF(x0, yy), QPointF(x1, yy))
+        
     painter.end()
     return pm
 
-from typing import Literal
-from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import (
-    QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
-)
-
 def icon_shuffle(size: int = 18, color: QColor = QColor(235, 235, 235), off: bool = False) -> QPixmap:
+
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
@@ -180,7 +187,7 @@ def icon_shuffle(size: int = 18, color: QColor = QColor(235, 235, 235), off: boo
     pen.setWidthF(max(1.5, size * 0.09))
     pen.setCapStyle(Qt.RoundCap)
     painter.setPen(pen)
-    
+
     p1 = QPainterPath()
     p1.moveTo(size * 0.16, size * 0.26)
     p1.cubicTo(size * 0.36, size * 0.26, size * 0.46, size * 0.76, size * 0.78, size * 0.76)
@@ -189,13 +196,15 @@ def icon_shuffle(size: int = 18, color: QColor = QColor(235, 235, 235), off: boo
     p2.moveTo(size * 0.16, size * 0.76)
     p2.cubicTo(size * 0.36, size * 0.76, size * 0.46, size * 0.26, size * 0.78, size * 0.26)
     painter.drawPath(p2)
+
     # Arrowheads
-    ah = size * 0.08
+    ah = size * 0.12
     painter.drawLine(size * 0.70, size * 0.18, size * 0.84, size * 0.26)
     painter.drawLine(size * 0.70, size * 0.34, size * 0.84, size * 0.26)
     painter.drawLine(size * 0.70, size * 0.68, size * 0.84, size * 0.76)
     painter.drawLine(size * 0.70, size * 0.84, size * 0.84, size * 0.76)
     painter.end()
+
     return pm
 
 def icon_repeat(size: int = 18, color: QColor = QColor(235, 235, 235), one: bool = False, off: bool = False) -> QPixmap:
@@ -247,14 +256,27 @@ def icon_close(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
 def icon_plus(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
+    
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    pen = QPen(color, max(1.8, size * 0.1))
+    
+    # Use a floating point pen width for precision
+    width = max(1.8, size * 0.1)
+    pen = QPen(color, width)
     pen.setCapStyle(Qt.RoundCap)
     painter.setPen(pen)
-    c = size // 2
-    painter.drawLine(size * 0.25, c, size * 0.75, c)
-    painter.drawLine(c, size * 0.25, c, size * 0.75)
+    
+    # Calculate the exact center using floats
+    # For a 18px box, the center is 9.0 - (0.5 if width is odd/even logic) 
+    # but simply using size / 2.0 with Antialiasing handles the centering best.
+    c = size / 2.0
+    margin = size * 0.20
+    
+    # Horizontal line
+    painter.drawLine(QPointF(margin, c), QPointF(size - margin, c))
+    # Vertical line
+    painter.drawLine(QPointF(c, margin), QPointF(c, size - margin))
+    
     painter.end()
     return pm
 
@@ -297,14 +319,18 @@ def icon_trash(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    pen = painter.pen()
-    pen.setColor(color)
-    pen.setWidthF(max(1.4, size * 0.08))
-    pen.setCapStyle(Qt.RoundCap)
+    pen = QPen(color, max(1.4, size * 0.08), Qt.SolidLine, Qt.RoundCap)
     painter.setPen(pen)
-    painter.drawRoundedRect(size * 0.28, size * 0.30, size * 0.44, size * 0.48, 2, 2)
-    painter.drawLine(int(size * 0.24), int(size * 0.30), int(size * 0.76), int(size * 0.30))
-    painter.drawLine(int(size * 0.36), int(size * 0.22), int(size * 0.64), int(size * 0.22))
+    
+    # Can
+    painter.drawRoundedRect(QRectF(size * 0.25, size * 0.35, size * 0.5, size * 0.5), 1, 1)
+    # Lid
+    painter.drawLine(QPointF(size * 0.2, size * 0.35), QPointF(size * 0.8, size * 0.35))
+    # Handle
+    painter.drawPolyline([QPointF(size * 0.4, size * 0.35), 
+                          QPointF(size * 0.4, size * 0.25), 
+                          QPointF(size * 0.6, size * 0.25), 
+                          QPointF(size * 0.6, size * 0.35)])
     painter.end()
     return pm
 
@@ -317,7 +343,7 @@ def icon_stop(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     painter.setPen(Qt.NoPen)
     painter.setBrush(QBrush(color))
 
-    pad = int(size * 0.28)
+    pad = int(size * 0.3)
     side = size - 2 * pad
     painter.drawRoundedRect(pad, pad, side, side, 2, 2)
     painter.end()
@@ -342,6 +368,30 @@ def icon_sort(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     painter.drawLine(int(size * 0.35), int(size * 0.50), x1 - int(size * 0.13), int(size * 0.50))
     painter.drawLine(int(size * 0.48), int(size * 0.72), x1 - int(size * 0.26), int(size * 0.72))
     
+    painter.end()
+    return pm
+
+
+def icon_search(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+
+    pen = QPen(color)
+    pen.setWidthF(max(1.5, size * 0.09))
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    radius = size * 0.28
+    cx = size * 0.44
+    cy = size * 0.44
+    painter.drawEllipse(QPointF(cx, cy), radius, radius)
+    painter.drawLine(
+        QPointF(cx + radius * 0.72, cy + radius * 0.72),
+        QPointF(size * 0.84, size * 0.84),
+    )
     painter.end()
     return pm
 
@@ -502,14 +552,69 @@ def icon_exit_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) 
     painter.end()
     return pm
 
+def icon_settings(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QBrush(color))
+    
+    cx, cy = size / 2, size / 2
+    outer_r = size * 0.45  # Peak of the tooth
+    inner_r = size * 0.32  # Base of the tooth
+    hole_r = size * 0.18   # Center hole
+    
+    path = QPainterPath()
+    num_teeth = 8
+    
+    for i in range(num_teeth):
+        # Calculate angles for the 4 corners of each trapezoidal tooth
+        angle_deg = i * (360 / num_teeth)
+        
+        # Point 1: Inner base start
+        a1 = math.radians(angle_deg - 12)
+        # Point 2: Outer peak start
+        a2 = math.radians(angle_deg - 8)
+        # Point 3: Outer peak end
+        a3 = math.radians(angle_deg + 8)
+        # Point 4: Inner base end
+        a4 = math.radians(angle_deg + 12)
+        
+        if i == 0:
+            path.moveTo(cx + inner_r * math.cos(a1), cy + inner_r * math.sin(a1))
+        else:
+            path.lineTo(cx + inner_r * math.cos(a1), cy + inner_r * math.sin(a1))
+            
+        path.lineTo(cx + outer_r * math.cos(a2), cy + outer_r * math.sin(a2))
+        path.lineTo(cx + outer_r * math.cos(a3), cy + outer_r * math.sin(a3))
+        path.lineTo(cx + inner_r * math.cos(a4), cy + inner_r * math.sin(a4))
+
+    path.closeSubpath()
+
+    # Subtract the center hole
+    hole_path = QPainterPath()
+    hole_path.addEllipse(cx - hole_r, cy - hole_r, hole_r * 2, hole_r * 2)
+    
+    final_gear = path.subtracted(hole_path)
+    
+    painter.drawPath(final_gear)
+    painter.end()
+    
+    return pm
 
 def get_app_icon() -> QIcon:
-
-
-    icon = QIcon()
-    base_path = Path(__file__).parent.parent / "icons"
-    for size in [16, 32, 64, 128, 256]:
-        icon_path = base_path / f"icon-{size}.png"
-        if icon_path.exists():
-            icon.addFile(str(icon_path))
-    return icon
+    """
+    Returns a QIcon object using the multi-resolution ICO file.
+    The ICO container holds 16px to 256px layers internally.
+    """
+    # Assuming icon.ico is in the 'icons' folder relative to this script
+    icon_path = Path(__file__).parent.parent / "icons" / "icon.ico"
+    
+    if icon_path.exists():
+        # Loading the .ico file directly handles all internal sizes (16, 32, 64, etc.)
+        return QIcon(str(icon_path))
+    
+    # Return an empty QIcon if the file is missing to avoid crashes
+    return QIcon()

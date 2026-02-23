@@ -47,11 +47,14 @@ def run() -> int:
     # path, otherwise `import mpv` inside player_window fires too early.
     if __package__ in (None, ""):
         from cadre_player.i18n import setup_i18n
+        from cadre_player.app_logging import setup_app_logging
         from cadre_player.player_window import ProOverlayPlayer
     else:
         from .i18n import setup_i18n
+        from .app_logging import setup_app_logging
         from .player_window import ProOverlayPlayer
 
+    setup_app_logging()
     setup_i18n()
 
     app = QApplication(sys.argv)

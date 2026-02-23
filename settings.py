@@ -9,6 +9,12 @@ MUTED_KEY = "audio/muted"
 SHUFFLE_KEY = "player/shuffle"
 REPEAT_KEY = "player/repeat"
 LANGUAGE_KEY = "player/language"
+EQUALIZER_ENABLED_KEY = "audio/equalizer_enabled"
+EQUALIZER_GAINS_KEY = "audio/equalizer_gains"
+STREAM_AUTH_ENABLED_KEY = "network/stream_auth_enabled"
+STREAM_AUTH_USERNAME_KEY = "network/stream_auth_username"
+STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
+STREAM_QUALITY_KEY = "network/stream_quality"
 
 def get_settings() -> QSettings:
     """Returns a QSettings object pointing to a visible .ini file."""
@@ -134,6 +140,7 @@ VIDEO_GAMMA_KEY = "video/gamma"
 VIDEO_ZOOM_KEY = "video/zoom"
 VIDEO_ROTATE_KEY = "video/rotate"
 VIDEO_HWDEC_KEY = "video/hwdec"
+VIDEO_RENDERER_KEY = "video/renderer"
 
 
 def load_video_settings():
@@ -146,6 +153,7 @@ def load_video_settings():
         "zoom": float(settings.value(VIDEO_ZOOM_KEY, 0.0)),
         "rotate": int(settings.value(VIDEO_ROTATE_KEY, 0)),
         "hwdec": settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
+        "renderer": settings.value(VIDEO_RENDERER_KEY, "gpu"),
     }
 
 
@@ -158,6 +166,7 @@ def save_video_settings(config: dict):
     if "zoom" in config: settings.setValue(VIDEO_ZOOM_KEY, float(config["zoom"]))
     if "rotate" in config: settings.setValue(VIDEO_ROTATE_KEY, int(config["rotate"]))
     if "hwdec" in config: settings.setValue(VIDEO_HWDEC_KEY, config["hwdec"])
+    if "renderer" in config: settings.setValue(VIDEO_RENDERER_KEY, config["renderer"])
     settings.sync()
 
 
@@ -219,4 +228,54 @@ def save_pinned_settings(name: str, value: bool):
         settings.setValue(PIN_CONTROLS_KEY, bool(value))
     elif name == "playlist":
         settings.setValue(PIN_PLAYLIST_KEY, bool(value))
+    settings.sync()
+
+
+def load_equalizer_settings():
+    settings = get_settings()
+    default_gains = [0] * 10
+    enabled = settings.value(EQUALIZER_ENABLED_KEY, False, type=bool)
+    gains_str = settings.value(EQUALIZER_GAINS_KEY, "")
+    gains = default_gains
+    if gains_str:
+        try:
+            parts = str(gains_str).split(",")
+            if len(parts) == 10:
+                gains = [int(p) for p in parts]
+        except:
+            pass
+    return {"enabled": enabled, "gains": gains}
+
+def save_equalizer_settings(enabled: bool, gains: list[int]):
+    settings = get_settings()
+    settings.setValue(EQUALIZER_ENABLED_KEY, enabled)
+    settings.setValue(EQUALIZER_GAINS_KEY, ",".join(map(str, gains)))
+    settings.sync()
+
+
+def load_stream_auth_settings():
+    settings = get_settings()
+    return {
+        "enabled": settings.value(STREAM_AUTH_ENABLED_KEY, False, type=bool),
+        "username": str(settings.value(STREAM_AUTH_USERNAME_KEY, "")),
+        "password": str(settings.value(STREAM_AUTH_PASSWORD_KEY, "")),
+    }
+
+
+def save_stream_auth_settings(enabled: bool, username: str, password: str):
+    settings = get_settings()
+    settings.setValue(STREAM_AUTH_ENABLED_KEY, bool(enabled))
+    settings.setValue(STREAM_AUTH_USERNAME_KEY, str(username or ""))
+    settings.setValue(STREAM_AUTH_PASSWORD_KEY, str(password or ""))
+    settings.sync()
+
+
+def load_stream_quality(default: str = "best") -> str:
+    settings = get_settings()
+    return str(settings.value(STREAM_QUALITY_KEY, default))
+
+
+def save_stream_quality(value: str):
+    settings = get_settings()
+    settings.setValue(STREAM_QUALITY_KEY, str(value or "best"))
     settings.sync()

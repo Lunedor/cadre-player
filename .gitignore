@@ -42,6 +42,7 @@ Thumbs.db
 *.reg
 *.spec
 todo.md
+logs.txt
 py_video/settings.json
 py_video/resume_info.json
 

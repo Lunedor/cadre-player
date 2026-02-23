@@ -1,11 +1,4 @@
-import json
-import locale
-from pathlib import Path
-from .utils import get_resource_path
-
-# Fallback English dictionary
-_default_en = {
-    # Generic / Mixed
+{
     "Play / Pause": "Play / Pause",
     "Stop": "Stop",
     "Previous": "Previous",
@@ -27,6 +20,8 @@ _default_en = {
     "Renderer": "Renderer",
     "GPU (Legacy)": "GPU (Legacy)",
     "GPU Next (Recommended for DV)": "GPU Next (Recommended for DV)",
+    "Equalizer": "Equalizer",
+    "Enable Equalizer": "Enable Equalizer",
     "Subtitle Tracks": "Subtitle Tracks",
     "No Subtitles": "No Subtitles",
     "Add Subtitle File": "Add Subtitle File",
@@ -40,8 +35,6 @@ _default_en = {
     "Pin Controls": "Pin Controls",
     "Pin Playlist": "Pin Playlist",
     "Quit": "Quit",
-    
-    # Playlist Context
     "Play": "Play",
     "Remove": "Remove",
     "Delete file": "Delete file",
@@ -66,8 +59,6 @@ _default_en = {
     "Cancel": "Cancel",
     "Reset": "Reset",
     "OK": "OK",
-
-    # Status Overlays
     "Volume: {}%": "Volume: {}%",
     "Added {}": "Added {}",
     "Adding files... {}": "Adding files... {}",
@@ -112,8 +103,6 @@ _default_en = {
     "Delay: {}s": "Delay: {}s",
     "Size: {}": "Size: {}",
     "Pos: {}": "Pos: {}",
-
-    # Dialogs & Prompts
     "Select files to open": "Select files to open",
     "Video Files ({})": "Video Files ({})",
     "All files (*.*)": "All files (*.*)",
@@ -142,8 +131,6 @@ _default_en = {
     "Duration": "Duration",
     "DESC": "DESC",
     "ASC": "ASC",
-
-    # Settings Dialogs
     "Appearance": "Appearance",
     "Font Size": "Font Size",
     "Color": "Color",
@@ -174,8 +161,6 @@ _default_en = {
     "Rotation": "Rotation",
     "Reset All": "Reset All",
     "auto": "auto",
-
-    # Tooltips
     "Shuffle": "Shuffle",
     "Repeat mode": "Repeat mode",
     "Add files": "Add files",
@@ -188,83 +173,5 @@ _default_en = {
     "Toggle playlist": "Toggle playlist",
     "Search playlist": "Search playlist",
     "Hide search": "Hide search",
-    "Search in playlist...": "Search in playlist...",
+    "Search in playlist...": "Search in playlist..."
 }
-
-_translations = {}
-
-def get_system_language():
-    try:
-        lang, _ = locale.getlocale()
-        if lang:
-            return lang.split('_')[0].lower()
-    except:
-        pass
-    return "en"
-
-def load_language(lang_code):
-    global _translations
-    translations_dir = get_resource_path("locales")
-    translations_dir.mkdir(exist_ok=True)
-    
-    lang_file = translations_dir / f"{lang_code}.json"
-    if lang_file.exists():
-        try:
-            with open(lang_file, "r", encoding="utf-8") as f:
-                _translations = json.load(f)
-        except Exception as e:
-            print(f"Failed to load language '{lang_code}': {e}")
-            _translations = {}
-    else:
-        _translations = {}
-        # If the file doesn't exist, we can optionally create a template
-        if lang_code == "en":
-            try:
-                with open(lang_file, "w", encoding="utf-8") as f:
-                    json.dump(_default_en, f, indent=4, ensure_ascii=False)
-            except:
-                pass
-
-def setup_i18n(lang_code=None):
-    if not lang_code:
-        # Check settings first, then fall back to system
-        from .settings import load_language_setting
-        lang_code = load_language_setting("")
-        if not lang_code:
-            lang_code = get_system_language()
-    load_language(lang_code)
-
-def get_supported_languages():
-    """Returns a list of (code, name) tuples for available locales."""
-    locales_dir = get_resource_path("locales")
-    langs = [("en", "English")] # English is always supported
-    
-    # Map of codes to display names (could be expanded)
-    names = {
-        "tr": "Türkçe",
-        "en": "English",
-        "de": "Deutsch",
-        "fr": "Français",
-        "es": "Español",
-        "ru": "Русский",
-        "zh": "中文"
-    }
-    
-    if locales_dir.exists():
-        for f in locales_dir.glob("*.json"):
-            code = f.stem
-            if code == "en": continue
-            name = names.get(code, code.upper())
-            langs.append((code, name))
-            
-    return sorted(langs, key=lambda x: x[1])
-
-def tr(text, *args):
-    """Translate function. Takes a format string and optional positional arguments."""
-    translated = _translations.get(text, _default_en.get(text, text))
-    if args:
-        try:
-            return translated.format(*args)
-        except Exception:
-            return translated
-    return translated
