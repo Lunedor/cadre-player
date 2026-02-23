@@ -1,3 +1,5 @@
+[![If you are a good person...](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/lunedor)
+
 # Cadre Player
 
 Cadre Player is a desktop media player built with Python, PySide6 (Qt), and libmpv.
