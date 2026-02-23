@@ -110,7 +110,7 @@ python main.py
 - Large playlists are handled with progressive updates and lazy duration scanning.
 - Duration filling is intentionally safer under heavy playback switching.
 - WebDAV URLs can be added from the URL import flow and resolved into playable entries.
-am extraction quality and completeness can depend on your local yt-dlp runtime setup.
+- Stream extraction quality and completeness can depend on your local yt-dlp runtime setup.
 
 ## License
 
