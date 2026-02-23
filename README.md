@@ -46,12 +46,6 @@ git clone https://github.com/<your-user-or-org>/cadre-player.git
 cd cadre-player
 ```
 
-If you already have the repository:
-
-```bash
-git pull
-```
-
 2. Install dependencies:
 
 ```bash
