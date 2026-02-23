@@ -1,5 +1,3 @@
-[![If you are a good person...](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/lunedor)
-
 # Cadre Player
 
 Cadre Player is a desktop media player built with Python, PySide6 (Qt), and libmpv.
@@ -46,10 +44,11 @@ git clone https://github.com/<your-user-or-org>/cadre-player.git
 cd cadre-player
 ```
 
-If you already have the repository:
+
+2. Install dependencies:
 
 ```bash
-gitrements.txt
+pip install -r requirements.txt
 ```
 
 3. Ensure mpv runtime is available:
@@ -109,7 +108,7 @@ python main.py
 - Large playlists are handled with progressive updates and lazy duration scanning.
 - Duration filling is intentionally safer under heavy playback switching.
 - WebDAV URLs can be added from the URL import flow and resolved into playable entries.
-- Stream extraction quality and completeness can depend on your local yt-dlp runtime setup.
+am extraction quality and completeness can depend on your local yt-dlp runtime setup.
 
 ## License
 
