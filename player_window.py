@@ -116,6 +116,7 @@ from .utils import (
     format_duration,
     is_video_file,
     is_audio_file,
+    list_folder_media,
     collect_paths,
     reveal_path,
     delete_to_trash as util_delete_to_trash,
@@ -1643,8 +1644,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         sel_str = os.path.normpath(str(selected))
         sel_lower = sel_str.lower()
 
-        # Get all videos in same folder
-        siblings = self.list_folder_videos(selected.parent)
+        # Get all media (video/audio) in same folder
+        siblings = list_folder_media(selected.parent)
         
         # Check if already in list (robust comparison)
         try:
