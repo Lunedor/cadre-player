@@ -46,16 +46,17 @@ git clone https://github.com/<your-user-or-org>/cadre-player.git
 cd cadre-player
 ```
 
-2. Install dependencies:
+If you already have the repository:
 
 ```bash
-pip install -r requirements.txt
+gitrements.txt
 ```
 
 3. Ensure mpv runtime is available:
 
-- On Windows, place `mpv-1.dll` or `libmpv-2.dll` where the app can find it.
-- This repository already includes `mpv-1.dll` for local Windows development.
+Cadre Player requires `libmpv-2.dll` or `mpv-1.dll`. 
+- If it is missing, download the DLL from [mpv.io](https://mpv.io/installation/).
+- Place the DLL in the root of the project folder or inside the `py_video` directory and rename it to 'mpv-1.dll' if it has a different name.
 
 ## Run
 
@@ -113,3 +114,4 @@ python main.py
 ## License
 
 MIT. See `LICENSE`.
+er the MIT License - see the [LICENSE](LICENSE) file for details.
