@@ -674,6 +674,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
         self.dragpos = None
         self._is_resizing = False # Add this
+        self._context_menu_open = False
+        self._fullscreen_transition_active = False
 
 
     def _save_zoom_setting(self):
@@ -890,13 +892,34 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def _exec_menu_on_top(self, menu: QMenu, global_pos: QPoint):
         if not menu:
             return None
+        had_title_bar = bool(hasattr(self, "title_bar") and self.title_bar.isVisible())
+        self._context_menu_open = True
+        if had_title_bar:
+            self.title_bar.hide()
         try:
             menu.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             menu.setAttribute(Qt.WA_AlwaysStackOnTop, True)
             menu.raise_()
         except Exception:
             pass
-        return menu.exec(global_pos)
+        try:
+            return menu.exec(global_pos)
+        finally:
+            self._context_menu_open = False
+            if had_title_bar:
+                QTimer.singleShot(0, self._restore_title_bar_after_menu)
+
+    def _restore_title_bar_after_menu(self):
+        if not hasattr(self, "title_bar"):
+            return
+        # Do not re-show the floating title bar over modal dialogs opened from menu actions.
+        if QApplication.activeModalWidget() is not None:
+            return
+        if self._context_menu_open or self.isFullScreen() or not self._is_app_focused():
+            return
+        self._sync_title_bar_geometry()
+        self.title_bar.show()
+        self.title_bar.raise_()
 
     def setup_playlist_ui(self):
         self.playlist_overlay.panel.setObjectName("PlaylistPanel")
@@ -929,6 +952,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.playlist_model.rowsMoved.connect(
             lambda *_: self.sync_playlist_from_widget()
         )
+        self.playlist_model.orderChanged.connect(self.sync_playlist_from_widget)
         layout.addWidget(self.playlist_widget, 1)
 
         controls = QHBoxLayout()
@@ -1153,6 +1177,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             if hasattr(self, "title_bar") and self.title_bar.isVisible():
                 self.title_bar.hide()
             return
+        if getattr(self, "_fullscreen_transition_active", False):
+            return
 
         global_pos = QCursor.pos()
         local_pos = self.mapFromGlobal(global_pos)
@@ -1234,7 +1260,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 self.playlist_auto_hide_timer.start()
 
         # Title/System Buttons auto-show (top area)
-        if self.current_index < 0:
+        if self._context_menu_open:
+            if self.title_bar.isVisible():
+                self.title_bar.hide()
+        elif self.current_index < 0:
             if not self.title_bar.isVisible() and not self.isFullScreen():
                 self._sync_title_bar_geometry()
                 self.title_bar.show()
@@ -3016,13 +3045,45 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
 
     def toggle_fullscreen(self):
-        if self.isFullScreen():
-            self.showNormal()
-            self.player.fullscreen = False
-        else:
-            self.showFullScreen()
-            self.player.fullscreen = True
-        self.update_fullscreen_icon()
+        if self._fullscreen_transition_active:
+            return
+        self._fullscreen_transition_active = True
+
+        if hasattr(self, "title_bar"):
+            self.title_bar.hide()
+        if hasattr(self, "overlay"):
+            self.overlay.hide()
+        if hasattr(self, "playlist_overlay") and not self.pinned_playlist:
+            self.playlist_overlay.hide()
+
+        target_fullscreen = not self.isFullScreen()
+        # Reduce one-frame geometry flicker during state transition.
+        self.setUpdatesEnabled(False)
+        try:
+            if target_fullscreen:
+                self.setWindowState(self.windowState() | Qt.WindowFullScreen)
+            else:
+                self.setWindowState(self.windowState() & ~Qt.WindowFullScreen)
+            self.show()
+            self.player.fullscreen = target_fullscreen
+            self.update_fullscreen_icon()
+        finally:
+            QTimer.singleShot(90, self._finalize_fullscreen_toggle)
+
+    def _finalize_fullscreen_toggle(self):
+        self.setUpdatesEnabled(True)
+        self._sync_overlay_geometry()
+        self._sync_playlist_overlay_geometry()
+        self._sync_speed_indicator_geometry()
+        self._sync_title_bar_geometry()
+
+        if self.pinned_controls:
+            self.overlay.show()
+        if self.pinned_playlist:
+            self.playlist_overlay.show()
+            self.playlist_overlay.raise_()
+
+        self._fullscreen_transition_active = False
 
     def screenshot_save_as(self):
         if not self.playlist or self.current_index < 0:

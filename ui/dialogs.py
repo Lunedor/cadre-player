@@ -553,3 +553,37 @@ class EqualizerDialog(QDialog):
         save_equalizer_settings(self.enabled, current_gains)
         if self.enabled:
             self.player_window.update_equalizer_gains(current_gains)
+
+
+class AboutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("About"))
+        self.setMinimumWidth(420)
+        self.setStyleSheet(DIALOG_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        title = QLabel("Cadre Player")
+        title.setStyleSheet("font-size: 20px; font-weight: 700; color: white;")
+        layout.addWidget(title)
+
+        subtitle = QLabel(tr("Modern desktop media player powered by MPV."))
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: rgba(255,255,255,185); font-size: 13px;")
+        layout.addWidget(subtitle)
+
+        details = QLabel(tr("• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls"))
+        
+        details.setStyleSheet("color: rgba(255,255,255,165); font-size: 12px;")
+        layout.addWidget(details)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton(tr("Close"))
+        close_btn.setObjectName("PrimaryButton")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)

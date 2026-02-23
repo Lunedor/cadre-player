@@ -178,5 +178,11 @@
     "About": "Hakkında",
     "Search playlist": "Çalma listesinde ara",
     "Hide search": "Aramayı gizle",
-    "Search in playlist...": "Çalma listesinde ara..."
+    "Search in playlist...": "Çalma listesinde ara...",
+    "Video Options": "Video Seçenekleri",
+    "Audio Options": "Ses Seçenekleri",
+    "Subtitle Options": "Altyazı Seçenekleri",
+    "View Interface": "Görünüm",
+    "Modern desktop media player powered by MPV.": "MPV tarafından desteklenen modern masaüstü medya oynatıcı.",
+    "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls": "• MPV altyapısı\n• Oynatma listesi ve akış desteği\n• Altyazı, video ve ekolayzer kontrolleri"
 }

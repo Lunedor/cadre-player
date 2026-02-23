@@ -8,14 +8,12 @@ def create_main_context_menu(player, pos):
     menu = QMenu(player)
     menu.setStyleSheet(MENU_STYLE)
 
-    # Play/Pause
+    # Playback Controls
     play_action = menu.addAction(tr("Play / Pause") + "\tSpace")
     play_action.triggered.connect(player.toggle_play)
 
     stop_action = menu.addAction(tr("Stop"))
     stop_action.triggered.connect(player.stop_playback)
-
-    menu.addSeparator()
 
     prev_action = menu.addAction(tr("Previous") + "\tPgUp")
     prev_action.triggered.connect(player.prev_video)
@@ -25,10 +23,7 @@ def create_main_context_menu(player, pos):
 
     menu.addSeparator()
 
-    mute_action = menu.addAction(tr("Mute / Unmute") + "\tM")
-    mute_action.triggered.connect(player.toggle_mute)
-
-    # Speed Submenu
+    # Standalone: Playback Speed
     speed_menu = menu.addMenu(tr("Playback Speed"))
     current_speed = float(player.player.speed or 1.0)
     for speed in [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]:
@@ -42,7 +37,11 @@ def create_main_context_menu(player, pos):
             action.setChecked(True)
         action.triggered.connect(lambda checked, s=speed: setattr(player.player, "speed", s))
 
-    menu.addSeparator()
+    # Audio Options
+    audio_options_menu = menu.addMenu(tr("Audio Options"))
+    mute_action = audio_options_menu.addAction(tr("Mute / Unmute") + "\tM")
+    mute_action.triggered.connect(player.toggle_mute)
+    audio_options_menu.addSeparator()
 
     # Audio Tracks
     tracks = []
@@ -52,7 +51,7 @@ def create_main_context_menu(player, pos):
         pass
     
     audio_tracks = [t for t in tracks if t['type'] == 'audio']
-    audio_menu = menu.addMenu(tr("Audio Tracks"))
+    audio_menu = audio_options_menu.addMenu(tr("Audio Tracks"))
     if len(audio_tracks) <= 1:
         audio_menu.setEnabled(False)
     else:
@@ -63,7 +62,12 @@ def create_main_context_menu(player, pos):
             if t['selected']: action.setChecked(True)
             action.triggered.connect(lambda checked, tid=t['id']: setattr(player.player, "aid", tid))
 
-    quality_menu = menu.addMenu(tr("Video Quality"))
+    eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
+    eq_action.triggered.connect(player.open_equalizer_dialog)
+
+    # Video Options
+    video_options_menu = menu.addMenu(tr("Video Options"))
+    quality_menu = video_options_menu.addMenu(tr("Video Quality"))
     quality_options = player.get_stream_quality_menu_options()
     if not quality_options:
         quality_menu.setEnabled(False)
@@ -74,10 +78,27 @@ def create_main_context_menu(player, pos):
             q_act.setChecked(is_current)
             q_act.triggered.connect(lambda checked, q=value: player.set_stream_quality(q))
 
+    # Aspect Ratio
+    aspect_menu = video_options_menu.addMenu(tr("Aspect Ratio"))
+    current_ar = load_aspect_ratio()
+    ratios = ["auto", "16:9", "4:3", "16:10", "2.35:1", "2.39:1"]
+    for r in ratios:
+        label = tr("Auto (Original)") if r == "auto" else r
+        act = aspect_menu.addAction(label)
+        act.setCheckable(True)
+        if current_ar == r: act.setChecked(True)
+        act.triggered.connect(lambda checked, ar=r: player.set_aspect_ratio(ar))
 
-    # Subtitle Tracks
+    video_settings_action = video_options_menu.addAction(tr("Video Settings")+"...")
+    video_settings_action.triggered.connect(player.open_video_settings)
+
+    ss_action = video_options_menu.addAction(tr("Screenshot") + "\tS")
+    ss_action.triggered.connect(player.screenshot_save_as)
+
+    # Subtitle Options
+    subtitle_options_menu = menu.addMenu(tr("Subtitle Options"))
     sub_tracks = [t for t in tracks if t['type'] == 'sub']
-    sub_menu = menu.addMenu(tr("Subtitle Tracks"))
+    sub_menu = subtitle_options_menu.addMenu(tr("Subtitle Tracks"))
     if not sub_tracks:
         sub_menu.setEnabled(False)
     else:
@@ -94,34 +115,15 @@ def create_main_context_menu(player, pos):
             if t['selected']: action.setChecked(True)
             action.triggered.connect(lambda checked, tid=t['id']: setattr(player.player, "sid", tid))
 
-    eq_action = menu.addAction(tr("Equalizer") + "...")
-    eq_action.triggered.connect(player.open_equalizer_dialog)
-    
-    # Aspect Ratio Submenu
-    aspect_menu = menu.addMenu(tr("Aspect Ratio"))
-    current_ar = load_aspect_ratio()
-    ratios = ["auto", "16:9", "4:3", "16:10", "2.35:1", "2.39:1"]
-    for r in ratios:
-        label = tr("Auto (Original)") if r == "auto" else r
-        act = aspect_menu.addAction(label)
-        act.setCheckable(True)
-        if current_ar == r: act.setChecked(True)
-        act.triggered.connect(lambda checked, ar=r: player.set_aspect_ratio(ar))
-
-    add_sub_action = menu.addAction(tr("Add Subtitle File")+"...")
+    add_sub_action = subtitle_options_menu.addAction(tr("Add Subtitle File")+"...")
     add_sub_action.triggered.connect(player.add_subtitle_file)
     
-    sub_settings_action = menu.addAction(tr("Subtitle Settings")+"...")
+    sub_settings_action = subtitle_options_menu.addAction(tr("Subtitle Settings")+"...")
     sub_settings_action.triggered.connect(player.open_subtitle_settings)
-
-    video_settings_action = menu.addAction(tr("Video Settings")+"...")
-    video_settings_action.triggered.connect(player.open_video_settings)
-
-    ss_action = menu.addAction(tr("Screenshot") + "\tS")
-    ss_action.triggered.connect(player.screenshot_save_as)
 
     menu.addSeparator()
 
+    # Standalone
     playlist_action = menu.addAction(tr("Toggle Playlist") + "\tP")
     playlist_action.triggered.connect(player.toggle_playlist_panel)
 
@@ -130,27 +132,29 @@ def create_main_context_menu(player, pos):
 
     menu.addSeparator()
 
-    pin_controls = menu.addAction(tr("Pin Controls"))
+    # View Interface
+    view_menu = menu.addMenu(tr("View Interface"))
+    pin_controls = view_menu.addAction(tr("Pin Controls"))
     pin_controls.setCheckable(True)
     pin_controls.setChecked(player.pinned_controls)
     pin_controls.triggered.connect(player.toggle_pin_controls)
 
-    pin_playlist = menu.addAction(tr("Pin Playlist"))
+    pin_playlist = view_menu.addAction(tr("Pin Playlist"))
     pin_playlist.setCheckable(True)
     pin_playlist.setChecked(player.pinned_playlist)
     pin_playlist.triggered.connect(player.toggle_pin_playlist)
 
-    menu.addSeparator()
-
-    fs_action = menu.addAction(tr("Fullscreen") + "\tF")
+    fs_action = view_menu.addAction(tr("Fullscreen") + "\tF")
     fs_action.triggered.connect(player.toggle_fullscreen)
 
-    ontop_action = menu.addAction(tr("Always On Top"))
+    ontop_action = view_menu.addAction(tr("Always On Top"))
     ontop_action.setCheckable(True)
     ontop_action.setChecked(player.always_on_top)
     ontop_action.triggered.connect(player.toggle_always_on_top)
 
-    # Language Selection
+    menu.addSeparator()
+
+    # Standalone: Language
     lang_menu = menu.addMenu(tr("Language"))
     supported_langs = get_supported_languages()
     current_lang = load_language_setting("")
@@ -171,6 +175,7 @@ def create_main_context_menu(player, pos):
     
     menu.addSeparator()
 
+    # Standalone: About
     about_action = menu.addAction(tr("About"))
     about_action.triggered.connect(player.open_about_dialog)
 

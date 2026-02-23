@@ -5,8 +5,13 @@ from PySide6.QtCore import (
     QModelIndex,
     QRect,
     QSize,
+    Signal,
     QSortFilterProxyModel,
     Qt,
+    QMimeData,
+    QByteArray,
+    QDataStream,
+    QIODevice,
 )
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
 from PySide6.QtWidgets import (
@@ -59,6 +64,8 @@ def _playlist_item_name(path_value: str) -> str:
 
 
 class PlaylistListModel(QAbstractListModel):
+    orderChanged = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._paths: list[str] = []
@@ -99,6 +106,71 @@ class PlaylistListModel(QAbstractListModel):
             | Qt.ItemIsDragEnabled
             | Qt.ItemIsDropEnabled
         )
+
+    def mimeTypes(self):
+        return ["application/x-cadre-playlist-rows"]
+
+    def mimeData(self, indexes):
+        mime = QMimeData()
+        encoded_data = QByteArray()
+        stream = QDataStream(encoded_data, QIODevice.WriteOnly)
+        
+        rows = sorted({index.row() for index in indexes})
+        for row in rows:
+            stream.writeInt32(row)
+            
+        mime.setData("application/x-cadre-playlist-rows", encoded_data)
+        return mime
+
+    def dropMimeData(self, data, action, row, column, parent):
+        if action == Qt.IgnoreAction:
+            return True
+        if not data.hasFormat("application/x-cadre-playlist-rows"):
+            return False
+        
+        if row != -1:
+            begin_row = row
+        elif parent.isValid():
+            begin_row = parent.row()
+        else:
+            begin_row = self.rowCount()
+            
+        encoded_data = data.data("application/x-cadre-playlist-rows")
+        stream = QDataStream(encoded_data, QIODevice.ReadOnly)
+        source_rows = []
+        while not stream.atEnd():
+            source_rows.append(stream.readInt32())
+
+        source_rows = sorted(
+            {
+                int(r)
+                for r in source_rows
+                if isinstance(r, int) and 0 <= int(r) < len(self._paths)
+            }
+        )
+        if not source_rows:
+            return False
+
+        original = list(self._paths)
+        moving = [original[r] for r in source_rows]
+        source_set = set(source_rows)
+        remaining = [value for i, value in enumerate(original) if i not in source_set]
+
+        insert_row = begin_row
+        for r in source_rows:
+            if r < begin_row:
+                insert_row -= 1
+        insert_row = max(0, min(insert_row, len(remaining)))
+
+        reordered = remaining[:insert_row] + moving + remaining[insert_row:]
+        if reordered == original:
+            return False
+
+        self.beginResetModel()
+        self._paths = reordered
+        self.endResetModel()
+        self.orderChanged.emit()
+        return True
 
     def supportedDropActions(self):
         return Qt.MoveAction

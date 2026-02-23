@@ -177,6 +177,12 @@
     "Playlist Unpinned": "Liste détachée",
     "About": "À propos",
     "Search playlist": "Rechercher dans la liste de lecture",
+    "Video Options": "Options vidéo",
+    "Audio Options": "Options audio",
+    "Subtitle Options": "Options sous-titres",
+    "View Interface": "Voir l'interface",
     "Hide search": "Masquer la recherche",
-    "Search in playlist...": "Rechercher dans la liste de lecture..."
+    "Search in playlist...": "Rechercher dans la liste de lecture...",
+    "Modern desktop media player powered by MPV.": "Lecteur multimédia de bureau moderne propulsé par MPV.",
+    "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls": "• Moteur MPV\n• Support de la liste de lecture et des flux\n• Contrôles des sous-titres, de la vidéo et de l'égaliseur"
 }
