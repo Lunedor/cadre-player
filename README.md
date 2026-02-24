@@ -82,20 +82,44 @@ python main.py
 
 ## Keyboard Shortcuts
 
-| Key | Action |
-| --- | --- |
-| `Space` | Play / Pause |
-| `Left` / `Right` | Seek backward / forward |
-| `Up` / `Down` | Volume up / down |
-| `PageUp` | Previous item |
-| `PageDown` | Next item |
-| `Enter` (playlist) | Play selected item |
-| `Delete` | Remove selected playlist items |
-| `Shift+Delete` | Move selected local file(s) to recycle bin |
-| `P` | Toggle playlist |
-| `F` | Toggle fullscreen |
-| `M` | Mute / Unmute |
-| `Esc` | Exit fullscreen or hide unpinned playlist |
+| Key          | Action                                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| Space        | Play / Pause                                                                                               |
+| Left / Right | Seek backward / forward                                                                                    |
+| Up / Down    | Volume up / down                                                                                           |
+| PageUp       | Previous item                                                                                              |
+| PageDown     | Next item                                                                                                  |
+| Enter        | Toggle fullscreen or play selected item when playlist is focused                                           |
+| F            | Toggle fullscreen                                                                                          |
+| Esc          | Exit fullscreen or hide unpinned playlist                                                                  |
+| Delete       | Remove selected playlist item(s)                                                                           |
+| Shift+Delete | Move selected local file(s) to recycle bin / trash                                                         |
+| P            | Toggle playlist panel                                                                                      |
+| M            | Mute / Unmute                                                                                              |
+| S            | Screenshot SaveAsSave AsSaveAs                                                                             |
+| V            | Open video settings                                                                                        |
+| F4           | Toggle full-duration scan                                                                                  |
+| .            | Next frame frame−stepframe-stepframe−step                                                                  |
+| ,            | Previous frame frame−back−stepframe-back-stepframe−back−step                                               |
+| [            | Decrease playback speed (step)                                                                             |
+| ]            | Increase playback speed (step)                                                                             |
+| +            | Window zoom in                                                                                             |
+| -            | Window zoom out                                                                                            |
+| 0            | Reset window zoom and reset pan                                                                            |
+| 4            | Pan left only when video is zoomed                                                                         |
+| 6            | Pan right only when video is zoomed                                                                        |
+| 8            | Pan up only when video is zoomed                                                                           |
+| 2            | Pan down only when video is zoomed                                                                         |
+| R            | Rotate video +90°                                                                                          |
+| B            | Increase brightness                                                                                        |
+| Shift+B      | Decrease brightness                                                                                        |
+| G            | Subtitle delay −0.1s                                                                                       |
+| H            | Subtitle delay +0.1s                                                                                       |
+| J            | Subtitle size −1                                                                                           |
+| K            | Subtitle size +1                                                                                           |
+| U            | Subtitle position −1                                                                                       |
+| I            | Subtitle position +1                                                                                       |
+
 
 ## Logs and Data Files
 
