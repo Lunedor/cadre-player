@@ -15,12 +15,19 @@ It is focused on:
 
 ## Screenshots
 
-Add your screenshots into a folder like `docs/screenshots/` and keep these names:
+![Main Window](screenshots/main-window-1.png)  
+![Main Window](screenshots/main-window-2.png)  
+*Compact controls with frameless design*
 
-![Main Window](docs/screenshots/main-window.png)
-![Playlist Panel](docs/screenshots/playlist-panel.png)
-![Settings](docs/screenshots/subtitle-settings.png)
-![Video Playing](docs/screenshots/video-settings.png)
+![Settings Menu](screenshots/settings.png)  
+*Quick-access video/subtitle tweaks*
+
+![Full UI Overlay](screenshots/video-playing.png)  
+*All overlays active: titlebar + controls + playlist on video*
+
+![Clean Playback](screenshots/clean-video-playing.png)  
+*Minimal mode: video-focused, auto-hiding UI*
+
 
 ## Features
 

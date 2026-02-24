@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMenu,
-    QSizeGrip,
     QMessageBox,
     QSizePolicy,
     QVBoxLayout,
@@ -43,7 +42,6 @@ from .settings import (
     save_shuffle,
     save_volume,
     load_sub_settings,
-    save_sub_settings,
     load_video_settings,
     save_video_settings,
     load_aspect_ratio,
@@ -99,7 +97,6 @@ from .ui.widgets import (
     PlaylistItemDelegate,
     PlaylistListModel,
     PlaylistWidget,
-    RoundedPanel,
     TitleBarOverlay,
 )
 
@@ -284,10 +281,10 @@ def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[s
 def _fetch_webdav_files_recursive(
     url: str,
     auth: Optional[dict] = None,
-    max_depth: int = 2,
-    max_items: int = 1200,
-    max_requests: int = 8,
-    max_seconds: int = 15,
+    max_depth: int = 10,
+    max_items: int = 5000,
+    max_requests: int = 200,
+    max_seconds: int = 300,
 ) -> list[str]:
     files = []
     queue = [(url.rstrip("/") + "/", 0)]
@@ -640,7 +637,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         logging.info("ProOverlayPlayer init: module=%s", __file__)
         
         self.setWindowTitle("Cadre Player")
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(720, 480)
+        self.resize(720, 480)
         self.setAcceptDrops(True)
         self.setWindowIcon(get_app_icon())
 
@@ -662,6 +660,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._suspend_ui_poll_until = 0.0
         self._next_ui_poll_at = 0.0
         self._next_track_switch_allowed_at = 0.0
+        self._pending_resize_check = False
         self._track_switch_cooldown = 0.22
         self._manual_switch_delay_ms = 140
         self._switch_request_id = 0
@@ -2613,6 +2612,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
     def force_ui_update(self):
         try:
+            if self._pending_resize_check:
+                if self.player.dwidth and self.player.dheight:
+                    self.sync_size()
+                    self._pending_resize_check = False
+
             if self._pending_show_background:
                 self._pending_show_background = False
                 self.background_widget.show()
@@ -2771,6 +2775,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._pending_auto_next = False
         self._pending_show_background = False
         self._last_track_switch_time = time.monotonic()
+        self._pending_resize_check = True
         self._auto_next_deadline = 0.0
         self._user_paused = False
         self._last_position = 0.0
@@ -2862,6 +2867,14 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.player.video_zoom = self.window_zoom
             return
 
+        # Keep first-start/empty-player window at the configured minimum size.
+        if not (self.player.dwidth and self.player.dheight):
+            params = self.player.video_params or {}
+            if not params.get("w") or not params.get("h"):
+                self.resize(self.minimumWidth(), self.minimumHeight())
+                self.player.video_zoom = 0.0
+                return
+
         # Use video_params for intrinsic dimensions (actual source file specs)
         params = self.player.video_params
         if not params or not params.get('w'):
@@ -2881,7 +2894,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             if isinstance(override, str) and ":" in override:
                 try:
                     num, den = map(float, override.split(":"))
-                    effective_aspect = num / den
+                    if den > 0: effective_aspect = num / den
                 except: pass
             elif isinstance(override, (int, float)) and override > 0:
                 effective_aspect = float(override)
@@ -2912,15 +2925,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         limit_w = screen_rect.width() * 0.9
         if target_w > limit_w:
             target_w = limit_w
-            target_h = target_w / effective_aspect
+            if effective_aspect > 0: target_h = target_w / effective_aspect
 
-        # Ensure minimum window size
-        if target_w < 400:
-            target_w = 400
-            target_h = target_w / effective_aspect
-        if target_h < 300:
-            target_h = 300
-            target_w = target_h * effective_aspect
+        # Ensure minimum window size while preserving aspect ratio
+        min_w = self.minimumWidth()
+        min_h = self.minimumHeight()
+        
+        scale_w = min_w / target_w if target_w > 0 and target_w < min_w else 1.0
+        scale_h = min_h / target_h if target_h > 0 and target_h < min_h else 1.0
+        
+        final_scale = max(scale_w, scale_h)
+        if final_scale > 1.0:
+            target_w *= final_scale
+            target_h *= final_scale
 
         # Resize the window
         self.resize(int(target_w), int(target_h))
@@ -3002,6 +3019,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.setWindowTitle("Cadre Player")
             if hasattr(self, "title_bar"):
                 self.title_bar.info_label.setText("")
+            self.sync_size()
         elif current_path and current_path in self.playlist:
             self.current_index = self.playlist.index(current_path)
         else:
@@ -3034,6 +3052,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.setWindowTitle("Cadre Player")
         if hasattr(self, "title_bar"):
             self.title_bar.info_label.setText("")
+        self.sync_size()
 
 
     def save_current_resume_info(self):
