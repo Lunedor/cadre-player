@@ -56,7 +56,7 @@ Windows is the primary tested platform.
 ## Installation
 
 ```bash
-git clone https://github.com/<your-user-or-org>/cadre-player.git
+git clone https://github.com/Lunedor/cadre-player.git
 cd cadre-player
 pip install -r requirements.txt
 ```
