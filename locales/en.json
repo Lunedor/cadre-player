@@ -60,7 +60,7 @@
     "Reset": "Reset",
     "OK": "OK",
     "Volume: {}%": "Volume: {}%",
-    "Added {}": "Added {}",
+    "Added {count}": "Added {count}",
     "Adding files... {}": "Adding files... {}",
     "including": "including",
     "excluding": "excluding",
@@ -173,5 +173,18 @@
     "Toggle playlist": "Toggle playlist",
     "Search playlist": "Search playlist",
     "Hide search": "Hide search",
-    "Search in playlist...": "Search in playlist..."
+    "Search in playlist...": "Search in playlist...",
+    "Video Options": "Video Options",
+    "Audio Options": "Audio Options",
+    "Subtitle Options": "Subtitle Options",
+    "View Interface": "View Interface",
+    "Modern desktop media player powered by MPV.": "Modern desktop media player powered by MPV.",
+    "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls": "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls",
+    "Scan All Durations": "Scan All Durations",
+    "Cancel Duration Scan": "Cancel Duration Scan",
+    "Scanning durations... {}/{}": "Scanning durations... {}/{}",
+    "Duration scan complete ({}/{})": "Duration scan complete ({}/{})",
+    "Duration scan cancelled ({}/{})": "Duration scan cancelled ({}/{})",
+    "All local item durations are already known": "All local item durations are already known",
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled."
 }

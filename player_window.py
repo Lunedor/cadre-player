@@ -1628,7 +1628,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 play_new=is_idle,
                 recursive=recursive,
                 use_collect=True,
-                on_done=lambda new_items: self.show_status_overlay(tr("Added {}".format(len(new_items)))),
+                on_done=lambda new_items: self.show_status_overlay(
+                    tr("Added {count}").format(count=len(new_items))
+                ),
             )
 
     def _ask_recursive_import(self) -> bool:
@@ -1700,7 +1702,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.append_to_playlist_async(
                 files,
                 play_new=False,
-                on_done=lambda new_items: self.show_status_overlay(tr("Added {}".format(len(new_items)))),
+                on_done=lambda new_items: self.show_status_overlay(
+                    tr("Added {count}").format(count=len(new_items))
+                ),
             )
 
     def add_folder_dialog(self):
@@ -1712,7 +1716,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 play_new=False,
                 recursive=recursive,
                 use_collect=True,
-                on_done=lambda new_items: self.show_status_overlay(tr("Added {}".format(len(new_items)))),
+                on_done=lambda new_items: self.show_status_overlay(
+                    tr("Added {count}").format(count=len(new_items))
+                ),
             )
 
     def open_url_dialog(self):
@@ -2199,7 +2205,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
         confirm = QMessageBox.question(
             self,
-            tr("Scan all durations"),
+            tr("Scan All Durations"),
             tr("Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.").format(len(targets)),
             QMessageBox.Yes | QMessageBox.No,
         )
@@ -2371,7 +2377,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         menu.addAction(dur_asc_act)
         menu.addAction(dur_desc_act)
         menu.addSeparator()
-        scan_label = tr("Cancel Duration Scan (F4)") if self._full_duration_scan_active else tr("Scan All Durations (F4)")
+        scan_label = tr("Cancel Duration Scan") + "(F4)" if self._full_duration_scan_active else tr("Scan All Durations") + "(F4)"
         scan_act = QAction(scan_label, menu)
         scan_act.triggered.connect(self.toggle_full_duration_scan)
         menu.addAction(scan_act)
@@ -3352,7 +3358,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._user_paused = False
         self.current_index = next_index
         self._schedule_play_current(self._manual_switch_delay_ms if manual else 0)
-        self.show_status_overlay("Previous")
+        self.show_status_overlay(tr("Previous"))
         logging.info("Prev video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
 
     def next_video(self, manual: bool = True):
@@ -3368,7 +3374,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._user_paused = False
         self.current_index = next_index
         self._schedule_play_current(self._manual_switch_delay_ms if manual else 0)
-        self.show_status_overlay("Next")
+        self.show_status_overlay(tr("Next"))
         logging.info("Next video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
         return True
 

@@ -40,6 +40,10 @@ _default_en = {
     "Pin Controls": "Pin Controls",
     "Pin Playlist": "Pin Playlist",
     "Quit": "Quit",
+    "Video Options": "Video Options",
+    "Audio Options": "Audio Options",
+    "Subtitle Options": "Subtitle Options",
+    "View Interface": "View Interface",
     
     # Playlist Context
     "Play": "Play",
@@ -69,7 +73,7 @@ _default_en = {
 
     # Status Overlays
     "Volume: {}%": "Volume: {}%",
-    "Added {}": "Added {}",
+    "Added {count}": "Added {count}",
     "Adding files... {}": "Adding files... {}",
     "including": "including",
     "excluding": "excluding",
@@ -119,7 +123,7 @@ _default_en = {
     "All files (*.*)": "All files (*.*)",
     "Select folder to open": "Select folder to open",
     "Include Subfolders": "Include Subfolders",
-    "Do you want to include videos from subfolders as well?": "Do you want to include videos from subfolders as well?",
+    "Do you want to include media from subfolders as well?": "Do you want to include media from subfolders as well?",
     "Select Save Location": "Select Save Location",
     "M3U files (*.m3u *.m3u8);;All files (*.*)": "M3U files (*.m3u *.m3u8);;All files (*.*)",
     "Select M3U Playlist": "Select M3U Playlist",
@@ -142,6 +146,15 @@ _default_en = {
     "Duration": "Duration",
     "DESC": "DESC",
     "ASC": "ASC",
+    "Modern desktop media player powered by MPV.": "Modern desktop media player powered by MPV.",
+    "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls": "• MPV backend\n• Playlist and stream support\n• Subtitle, video and equalizer controls",
+    "Scan All Durations": "Scan All Durations",
+    "Cancel Duration Scan": "Cancel Duration Scan",
+    "Scanning durations... {}/{}": "Scanning durations... {}/{}",
+    "Duration scan complete ({}/{})": "Duration scan complete ({}/{})",
+    "Duration scan cancelled ({}/{})": "Duration scan cancelled ({}/{})",
+    "All local item durations are already known": "All local item durations are already known",
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.",
 
     # Settings Dialogs
     "Appearance": "Appearance",
@@ -246,8 +259,13 @@ def get_supported_languages():
         "de": "Deutsch",
         "fr": "Français",
         "es": "Español",
+        "pt": "Português",
+        "it": "Italiano",
+        "ja": "日本語",
+        "uk": "Українська",
         "ru": "Русский",
-        "zh": "中文"
+        "zh": "中文",
+        "ar": "العربية"
     }
     
     if locales_dir.exists():

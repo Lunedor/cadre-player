@@ -126,7 +126,7 @@ In packaged/frozen mode on Windows, files are stored in:
 - `ui/`: widgets, dialogs, icons, styles, menus
 - `settings.py`: settings helpers
 - `app_logging.py`: logging + exception hooks
-- `locales/`: translation files
+- `locales/`: translation files (English, German, French, Spanish, Italian, Turkish, Portuguese, Russian, Ukranian, Japanese, Chinese and Arabic)
 
 ## License
 
