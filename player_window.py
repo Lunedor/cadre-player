@@ -3681,10 +3681,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             if (self.player.video_zoom or 0.0) > 0.0:
                 self.player.video_pan_y = max(-3.0, (self.player.video_pan_y or 0.0) - 0.05)
                 self.show_status_overlay(tr("Pan Down"))
-        elif key == Qt.Key_R and (event.modifiers() & Qt.ControlModifier):
-            current = self.player.video_rotate or 0
-            self.player.video_rotate = (current + 90) % 360
-            self.show_status_overlay(tr("Rotate: {}°").format(self.player.video_rotate))
         elif key == Qt.Key_B: # Brightness shortcuts
             if event.modifiers() & Qt.ShiftModifier:
                 self.player.brightness = max(-100, self.player.brightness - 5)
@@ -3699,6 +3695,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.toggle_playlist_panel()
         elif key == Qt.Key_V:
             self.open_video_settings()
+        elif key == Qt.Key_R and (event.modifiers() & Qt.ControlModifier):
+            self.player.video_rotate = 0
+            self.show_status_overlay(tr("Rotate reset"))
+            return
         elif key == Qt.Key_R:
             current = self.player.video_rotate or 0
             self.player.video_rotate = (current + 90) % 360

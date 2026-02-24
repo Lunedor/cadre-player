@@ -118,6 +118,7 @@
     "Pan Up": "上にパン",
     "Pan Down": "下にパン",
     "Rotate: {}°": "回転: {}°",
+    "Rotate reset": "回転をリセット",
     "Brightness: {}": "明るさ: {}",
     "Delay: {}s": "遅延: {}秒",
     "Size: {}": "サイズ: {}",

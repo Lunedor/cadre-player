@@ -112,6 +112,7 @@ _default_en = {
     "Unmuted": "Unmuted",
     "Zoom: {}": "Zoom: {}",
     "Rotate: {}°": "Rotate: {}°",
+    "Rotate reset": "Rotate reset",
     "Brightness: {}": "Brightness: {}",
     "Delay: {}s": "Delay: {}s",
     "Size: {}": "Size: {}",

@@ -111,6 +111,7 @@ python main.py
 | 8            | Pan up only when video is zoomed                                                                           |
 | 2            | Pan down only when video is zoomed                                                                         |
 | R            | Rotate video +90°                                                                                          |
+| Ctrl+R       | Reset Rotation                                                                                             |
 | B            | Increase brightness                                                                                        |
 | Shift+B      | Decrease brightness                                                                                        |
 | G            | Subtitle delay −0.1s                                                                                       |

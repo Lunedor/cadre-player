@@ -118,6 +118,7 @@
     "Pan Up": "Décalage haut",
     "Pan Down": "Décalage bas",
     "Rotate: {}°": "Rotation : {}°",
+    "Rotate reset": "Réinitialiser la rotation",
     "Brightness: {}": "Luminosité : {}",
     "Delay: {}s": "Délai : {}s",
     "Size: {}": "Taille : {}",

@@ -118,6 +118,7 @@
     "Pan Up": "向上平移",
     "Pan Down": "向下平移",
     "Rotate: {}°": "旋转: {}°",
+    "Rotate reset": "重置旋转",
     "Brightness: {}": "亮度: {}",
     "Delay: {}s": "延迟: {}s",
     "Size: {}": "大小: {}",
