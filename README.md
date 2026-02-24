@@ -2,62 +2,64 @@
 
 # Cadre Player
 
-Cadre Player is a desktop media player built with Python, PySide6 (Qt), and libmpv.
-It focuses on a clean frameless UI, playlist workflows, and practical controls for local and URL-based media.
-
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen.svg)
 ![Framework](https://img.shields.io/badge/framework-PySide6-orange.svg)
 
+Cadre Player is a frameless desktop media player built with Python, PySide6 (Qt), and libmpv.
+
+It is focused on:
+- fast playlist workflows
+- clean playback controls
+- local files + URL-based media (WebDAV, m3u/m3u8, YouTube links/playlists)
+
+## Screenshots
+
+Add your screenshots into a folder like `docs/screenshots/` and keep these names:
+
+![Main Window](docs/screenshots/main-window.png)
+![Playlist Panel](docs/screenshots/playlist-panel.png)
+![Settings](docs/screenshots/subtitle-settings.png)
+![Video Playing](docs/screenshots/video-settings.png)
+
 ## Features
 
-- Frameless window with custom title bar
-- Playlist panel with drag and drop, search, sort, and multi-select actions
-- File, folder, URL, and WebDAV import support
-- Audio and video playback through mpv
-- Repeat and shuffle modes
-- Playback speed control
-- Subtitle and video settings dialogs
-- Equalizer dialog
-- Resume position per media item
-- M3U save/load support
-- YouTube and stream URL import (yt-dlp based)
-- App logging to `logs.txt`
+- Frameless UI with custom title overlay and transport controls
+- Playlist panel with drag-drop reorder, search, sort, and multi-select actions
+- Import from file, folder, URL, remote m3u/m3u8, and WebDAV folder
+- YouTube URL/playlist extraction through `yt-dlp`
+- Playback speed controls, shuffle, repeat modes
+- Subtitle settings, video tuning, and 10-band equalizer
+- Resume position per item
+- Playlist save/load
+- Runtime diagnostics logging (`logs.txt`)
 
 ## Requirements
 
 - Python 3.8+
-- Windows, Linux, or macOS (Windows is the primary tested environment)
-- `libmpv` runtime available
+- `libmpv` runtime (`mpv-1.dll` / `libmpv`)
+- Dependencies in `requirements.txt`:
+  - `PySide6`
+  - `python-mpv`
+  - `Send2Trash`
+  - `yt-dlp`
 
-Python dependencies are listed in `requirements.txt`:
-
-- `PySide6`
-- `python-mpv`
-- `Send2Trash`
-- `yt-dlp`
+Windows is the primary tested platform.
 
 ## Installation
-
-1. Get the source:
 
 ```bash
 git clone https://github.com/<your-user-or-org>/cadre-player.git
 cd cadre-player
-```
-
-
-2. Install dependencies:
-
-```bash
 pip install -r requirements.txt
 ```
 
-3. Ensure mpv runtime is available:
+## mpv Runtime Setup
 
-Cadre Player requires `libmpv-2.dll` or `mpv-1.dll`. 
-- If it is missing, download the DLL from [mpv.io](https://mpv.io/installation/).
-- Place the DLL in the root of the project folder or inside the `py_video` directory and rename it to 'mpv-1.dll' if it has a different name.
+Cadre Player needs `libmpv` available at runtime.
+
+- On Windows, place `mpv-1.dll` in the project root (same folder as `main.py`), or make sure it is discoverable via system PATH.
+- If missing, get binaries from [mpv.io](https://mpv.io/installation/).
 
 ## Run
 
@@ -65,7 +67,7 @@ Cadre Player requires `libmpv-2.dll` or `mpv-1.dll`.
 python main.pyw
 ```
 
-Or:
+or
 
 ```bash
 python main.py
@@ -82,36 +84,43 @@ python main.py
 | `PageDown` | Next item |
 | `Enter` (playlist) | Play selected item |
 | `Delete` | Remove selected playlist items |
-| `Shift+Delete` | Delete selected file(s) to recycle bin |
+| `Shift+Delete` | Move selected local file(s) to recycle bin |
 | `P` | Toggle playlist |
-| `F` | Fullscreen |
+| `F` | Toggle fullscreen |
 | `M` | Mute / Unmute |
 | `Esc` | Exit fullscreen or hide unpinned playlist |
 
-## Logging and Diagnostics
+## Logs and Data Files
 
-- Runtime log file: `logs.txt`
-- Settings and resume data: `settings.ini`
-- If you hit a crash, clear `logs.txt`, reproduce once, then share the newest tail section.
+In development mode (running from source), files are kept in the project root:
+- `logs.txt`
+- `settings.ini`
+
+In packaged/frozen mode on Windows, files are stored in:
+- `%APPDATA%\CadrePlayer\`
+
+## Troubleshooting
+
+- YouTube links fail to import:
+  - update `yt-dlp`
+  - ensure internet access works
+  - check `logs.txt` for lines containing `YouTube extract` and `URL resolve`
+- URL dialog closes without importing:
+  - press the `Open` button explicitly (Enter now triggers Open in the URL field)
+- No playback:
+  - verify `mpv-1.dll` / `libmpv` is available
 
 ## Project Structure
 
-- `main.py`, `main.pyw`: entry points
-- `player_window.py`: main window and playback flow
-- `playlist.py`: background duration scanning
-- `logic.py`: repeat/shuffle navigation logic
+- `main.py`, `main.pyw`: app entry points
+- `player_window.py`: player UI + playback flow + import pipeline
+- `playlist.py`: duration scanning worker
+- `logic.py`: repeat/shuffle behavior
 - `ui/`: widgets, dialogs, icons, styles, menus
+- `settings.py`: settings helpers
+- `app_logging.py`: logging + exception hooks
 - `locales/`: translation files
-- `settings.py`: persistent app settings helpers
-- `app_logging.py`: logging setup and exception hooks
-
-## Current Notes
-
-- Large playlists are handled with progressive updates and lazy duration scanning.
-- Duration filling is intentionally safer under heavy playback switching.
-- WebDAV URLs can be added from the URL import flow and resolved into playable entries.
-- Stream extraction quality and completeness can depend on your local yt-dlp runtime setup.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License. See [LICENSE](LICENSE).

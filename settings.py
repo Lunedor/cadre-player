@@ -75,7 +75,6 @@ SUB_COLOR_KEY = "sub/color"
 SUB_POS_KEY = "sub/pos"
 SUB_DELAY_KEY = "sub/delay"
 SUB_BACK_STYLE_KEY = "sub/back_style"
-ALWAYS_ON_TOP_KEY = "player/always_on_top"
 ASPECT_RATIO_KEY = "video/aspect_ratio"
 RESUME_POS_PREFIX = "resume/"
 PIN_CONTROLS_KEY = "player/pin_controls"
@@ -115,20 +114,6 @@ def save_sub_settings(config: dict):
     if "pos" in config: settings.setValue(SUB_POS_KEY, int(config["pos"]))
     if "delay" in config: settings.setValue(SUB_DELAY_KEY, float(config["delay"]))
     if "back_style" in config: settings.setValue(SUB_BACK_STYLE_KEY, str(config["back_style"]))
-    settings.sync()
-
-
-def load_always_on_top(default: bool = False) -> bool:
-    settings = get_settings()
-    value = settings.value(ALWAYS_ON_TOP_KEY, default)
-    if isinstance(value, bool): return value
-    if isinstance(value, str): return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-def save_always_on_top(value: bool) -> None:
-    settings = get_settings()
-    settings.setValue(ALWAYS_ON_TOP_KEY, bool(value))
     settings.sync()
 
 

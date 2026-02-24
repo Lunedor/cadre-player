@@ -39,7 +39,11 @@ def setup_app_logging() -> Path:
     logging.captureWarnings(True)
     _enable_fault_handler(log_path)
     _install_exception_hooks()
-    logging.info("Logging initialized. Python=%s", sys.version.split()[0])
+    logging.info(
+        "Logging initialized. Python=%s log_path=%s",
+        sys.version.split()[0],
+        str(log_path),
+    )
     return log_path
 
 

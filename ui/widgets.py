@@ -539,7 +539,8 @@ class TitleBarOverlay(QWidget):
     def __init__(self, owner: QMainWindow):
         super().__init__(owner)
         self.owner = owner
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
+        # Keep the title overlay above the owner only; global always-on-top can leak over other apps.
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setMouseTracking(True)

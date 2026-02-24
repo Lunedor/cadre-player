@@ -391,11 +391,14 @@ class URLInputDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         cancel_btn = QPushButton(tr("Cancel"))
+        cancel_btn.setAutoDefault(False)
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         
         self.open_btn = QPushButton(tr("Open"))
         self.open_btn.setObjectName("PrimaryButton")
+        self.open_btn.setAutoDefault(True)
+        self.open_btn.setDefault(True)
         self.open_btn.clicked.connect(self.accept)
         btn_layout.addWidget(self.open_btn)
         
@@ -409,6 +412,7 @@ class URLInputDialog(QDialog):
         self._toggle_ssl_fields(self.ssl_check.isChecked())
         self.auth_check.toggled.connect(self._toggle_auth_fields)
         self.ssl_check.toggled.connect(self._toggle_ssl_fields)
+        self.url_edit.returnPressed.connect(self.open_btn.click)
 
     def _toggle_auth_fields(self, enabled: bool):
         self.username_edit.setEnabled(enabled)

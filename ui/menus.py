@@ -127,6 +127,14 @@ def create_main_context_menu(player, pos):
     playlist_action = menu.addAction(tr("Toggle Playlist") + "\tP")
     playlist_action.triggered.connect(player.toggle_playlist_panel)
 
+    scan_duration_label = (
+        tr("Cancel Duration Scan") + "\tF4"
+        if getattr(player, "_full_duration_scan_active", False)
+        else tr("Scan All Durations") + "\tF4"
+    )
+    scan_durations_action = menu.addAction(scan_duration_label)
+    scan_durations_action.triggered.connect(player.toggle_full_duration_scan)
+
     del_action = menu.addAction(tr("Delete File") + "\tDel")
     del_action.triggered.connect(player.delete_selected_file_to_trash)
 
