@@ -44,6 +44,7 @@ Thumbs.db
 *.tmp
 *.reg
 *.spec
+*.m3u
 mpv.config
 todo.md
 logs.txt
