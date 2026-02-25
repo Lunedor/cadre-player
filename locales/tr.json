@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Süre tarama tamamlandı ({}/{})",
     "Duration scan cancelled ({}/{})": "Süre tarama iptal edildi ({}/{})",
     "All local item durations are already known": "Tüm yerel öğelerin süreleri zaten biliniyor",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} yerel oynatma listesi öğesinin süresini şimdi taramak istiyor musunuz?\nTarama bitene kadar veya iptal edilene kadar oynatma duraklatılacak."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} yerel oynatma listesi öğesinin süresini şimdi taramak istiyor musunuz?\nTarama bitene kadar veya iptal edilene kadar oynatma duraklatılacak.",
+    "Imported 0, failed {}": "0 içe aktarıldı, {} başarısız",
+    "Imported {}, failed {}": "{} içe aktarıldı, {} başarısız",
+    "Restore last session playlist": "Son oturum oynatma listesini geri yükle",
+    "No saved session playlist": "Kaydedilmiş oturum oynatma listesi yok",
+    "Restored {} session items": "{} oturum öğesi geri yüklendi",
+    "Saved session playlist is empty": "Kaydedilmiş oturum oynatma listesi boş",
+    "Could not restore session playlist": "Oturum oynatma listesi geri yüklenemedi",
+    "Open file(s)": "Dosya aç",
+    "Open folder": "Klasör aç",
+    "Open URL dialog": "URL diyaloğu aç",
+    "Open Advanced Config (mpv.conf)": "Gelişmiş yapılandırma dosyasını aç (mpv.conf)",
+    "Open Scripts Folder": "Komut dosyaları klasörünü aç",
+    "Could not open mpv.conf": "mpv.conf dosyası açılamadı",
+    "Could not open scripts folder": "Komut dosyaları klasörü açılamadı",
+    "Stats overlay unavailable": "İstatistikler görünümü kullanılamaz"
 }

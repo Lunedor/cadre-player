@@ -187,5 +187,20 @@
     "Duration scan complete ({}/{})": "Duration scan complete ({}/{})",
     "Duration scan cancelled ({}/{})": "Duration scan cancelled ({}/{})",
     "All local item durations are already known": "All local item durations are already known",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.",
+    "Imported 0, failed {}": "Imported 0, failed {}",
+    "Imported {}, failed {}": "Imported {}, failed {}",
+    "Restore last session playlist": "Restore last session playlist",
+    "No saved session playlist": "No saved session playlist",
+    "Restored {} session items": "Restored {} session items",
+    "Saved session playlist is empty": "Saved session playlist is empty",
+    "Could not restore session playlist": "Could not restore session playlist",
+    "Open file(s)": "Open file(s)",
+    "Open folder": "Open folder",
+    "Open URL dialog": "Open URL dialog",
+    "Open Advanced Config (mpv.conf)": "Open Advanced Config (mpv.conf)",
+    "Open Scripts Folder": "Open Scripts Folder",
+    "Could not open mpv.conf": "Could not open mpv.conf",
+    "Could not open scripts folder": "Could not open scripts folder",
+    "Stats overlay unavailable": "Stats overlay unavailable"
 }

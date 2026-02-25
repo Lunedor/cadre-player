@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Laufzeit-Scan abgeschlossen ({}/{})",
     "Duration scan cancelled ({}/{})": "Laufzeit-Scan abgebrochen ({}/{})",
     "All local item durations are already known": "Alle lokalen Laufzeiten sind bereits bekannt",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Laufzeit für {} lokale Elemente der Wiedergabeliste jetzt scannen?\nDie Wiedergabe bleibt pausiert, bis der Scan abgeschlossen oder abgebrochen wird."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Laufzeit für {} lokale Elemente der Wiedergabeliste jetzt scannen?\nDie Wiedergabe bleibt pausiert, bis der Scan abgeschlossen oder abgebrochen wird.",
+    "Imported 0, failed {}": "Importiert 0, fehlgeschlagen {}",
+    "Imported {}, failed {}": "Importiert {}, fehlgeschlagen {}",
+    "Restore last session playlist": "Letzte Sitzungswiedergabeliste wiederherstellen",
+    "No saved session playlist": "Keine gespeicherte Sitzungswiedergabeliste",
+    "Restored {} session items": "{} Sitzungselemente wiederhergestellt",
+    "Saved session playlist is empty": "Die gespeicherte Sitzungswiedergabeliste ist leer",
+    "Could not restore session playlist": "Konnte Sitzungswiedergabeliste nicht wiederherstellen",
+    "Open file(s)": "Datei(en) öffnen",
+    "Open folder": "Ordner öffnen",
+    "Open URL dialog": "URL-Dialog öffnen",
+    "Open Advanced Config (mpv.conf)": "Erweiterte Konfiguration öffnen (mpv.conf)",
+    "Open Scripts Folder": "Skript-Ordner öffnen",
+    "Could not open mpv.conf": "Konnte mpv.conf nicht öffnen",
+    "Could not open scripts folder": "Konnte Skript-Ordner nicht öffnen",
+    "Stats overlay unavailable": "Statistik-Overlay nicht verfügbar"
 }

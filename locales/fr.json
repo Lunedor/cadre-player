@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Scan des durées terminé ({}/{})",
     "Duration scan cancelled ({}/{})": "Scan des durées annulé ({}/{})",
     "All local item durations are already known": "Toutes les durées locales sont déjà connues",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} éléments de la liste de lecture locale vont être scannés pour leur durée maintenant.\nLa lecture restera en pause jusqu'à la fin du scan ou son annulation."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "{} éléments de la liste de lecture locale vont être scannés pour leur durée maintenant.\nLa lecture restera en pause jusqu'à la fin du scan ou son annulation.",
+    "Imported 0, failed {}": "Importé 0, échec de {}",
+    "Imported {}, failed {}": "Importé {}, échec de {}",
+    "Restore last session playlist": "Restaurer la dernière liste de lecture de session",
+    "No saved session playlist": "Aucune liste de lecture de session sauvegardée",
+    "Restored {} session items": "{} éléments de session restaurés",
+    "Saved session playlist is empty": "La liste de lecture sauvegardée est vide",
+    "Could not restore session playlist": "Impossible de restaurer la liste de lecture de session",
+    "Open file(s)": "Ouvrir fichier(s)",
+    "Open folder": "Ouvrir dossier",
+    "Open URL dialog": "Ouvrir dialogue URL",
+    "Open Advanced Config (mpv.conf)": "Ouvrir configuration avancée (mpv.conf)",
+    "Open Scripts Folder": "Ouvrir dossier des scripts",
+    "Could not open mpv.conf": "Impossible d'ouvrir mpv.conf",
+    "Could not open scripts folder": "Impossible d'ouvrir le dossier des scripts",
+    "Stats overlay unavailable": "Overlay statistiques indisponible"
 }

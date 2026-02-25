@@ -26,7 +26,7 @@
     "Toggle Playlist": "تبديل قائمة التشغيل",
     "Delete File": "حذف الملف",
     "Fullscreen": "ملء الشاشة",
-    "Always On Top"": "دائما في المقدمة",
+    "Always On Top": "دائما في المقدمة",
     "Pin Controls": "تثبيت عناصر التحكم",
     "Pin Playlist": "تثبيت قائمة التشغيل",
     "Play": "تشغيل",
@@ -192,5 +192,15 @@
     "Duration scan complete ({}/{})": "اكتمل فحص المدة ({}/{})",
     "Duration scan cancelled ({}/{})": "تم إلغاء فحص المدة ({}/{})",
     "All local item durations are already known": "جميع مدد العناصر المحلية معروفة بالفعل",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "هل تريد فحص مدة {} عناصر محلية في قائمة التشغيل الآن؟\nسيبقى التشغيل متوقفًا مؤقتًا حتى ينتهي الفحص أو يتم إلغاؤه."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "هل تريد فحص مدة {} عناصر محلية في قائمة التشغيل الآن؟\nسيبقى التشغيل متوقفًا مؤقتًا حتى ينتهي الفحص أو يتم إلغاؤه.",
+    "Imported 0, failed {}": "Imported 0, failed {}",
+    "Imported {}, failed {}": "Imported {}, failed {}",
+    "Restore last session playlist": "Restore last session playlist",
+    "No saved session playlist": "No saved session playlist",
+    "Restored {} session items": "Restored {} session items",
+    "Saved session playlist is empty": "Saved session playlist is empty",
+    "Could not restore session playlist": "Could not restore session playlist",
+    "Open file(s)": "Open file(s)",
+    "Open folder": "Open folder",
+    "Open URL dialog": "Open URL dialog"
 }

@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "再生時間のスキャンが完了しました ({}/{})",
     "Duration scan cancelled ({}/{})": "再生時間のスキャンがキャンセルされました ({}/{})",
     "All local item durations are already known": "すべてのローカルアイテムの再生時間はすでに取得済みです",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "今すぐ {} 個のローカルプレイリストアイテムの再生時間をスキャンしますか？\nスキャンが完了またはキャンセルされるまで、再生は一時停止されます。"
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "今すぐ {} 個のローカルプレイリストアイテムの再生時間をスキャンしますか？\nスキャンが完了またはキャンセルされるまで、再生は一時停止されます。",
+    "Imported 0, failed {}": "0 個インポートされましたが、{} 個のインポートに失敗しました",
+    "Imported {}, failed {}": "{} 個インポートされましたが、{} 個のインポートに失敗しました",
+    "Restore last session playlist": "最後のセッションプレイリストを復元",
+    "No saved session playlist": "保存されたセッションプレイリストがありません",
+    "Restored {} session items": "{} 個のセッションアイテムを復元しました",
+    "Saved session playlist is empty": "保存されたセッションプレイリストは空です",
+    "Could not restore session playlist": "セッションプレイリストを復元できませんでした",
+    "Open file(s)": "ファイルを開く",
+    "Open folder": "フォルダーを開く",
+    "Open URL dialog": "URLダイアログを開く",
+    "Open Advanced Config (mpv.conf)": "高度な設定を開く (mpv.conf)",
+    "Open Scripts Folder": "スクリプトフォルダーを開く",
+    "Could not open mpv.conf": "mpv.conf を開けませんでした",
+    "Could not open scripts folder": "スクリプトフォルダーを開けませんでした",
+    "Stats overlay unavailable": "統計オーバーレイが利用できません"
 }

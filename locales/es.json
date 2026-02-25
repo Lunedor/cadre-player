@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Escaneo de duración completo ({}/{})",
     "Duration scan cancelled ({}/{})": "Escaneo de duración cancelado ({}/{})",
     "All local item durations are already known": "Todas las duraciones de los elementos locales ya son conocidas",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "¿Escanear la duración de {} elementos de la lista de reproducción local ahora?\nLa reproducción se pausará hasta que finalice o se cancele el escaneo."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "¿Escanear la duración de {} elementos de la lista de reproducción local ahora?\nLa reproducción se pausará hasta que finalice o se cancele el escaneo.",
+    "Imported 0, failed {}": "Importado 0, fallidos {}",
+    "Imported {}, failed {}": "Importado {}, fallidos {}",
+    "Restore last session playlist": "Restaurar última lista de reproducción de sesión",
+    "No saved session playlist": "No hay lista de reproducción guardada de sesión",
+    "Restored {} session items": "{} elementos de sesión restaurados",
+    "Saved session playlist is empty": "La lista de reproducción guardada de sesión está vacía",
+    "Could not restore session playlist": "No se pudo restaurar la lista de reproducción de sesión",
+    "Open file(s)": "Abrir archivo(s)",
+    "Open folder": "Abrir carpeta",
+    "Open URL dialog": "Abrir diálogo de URL",
+    "Open Advanced Config (mpv.conf)": "Abrir configuración avanzada (mpv.conf)",
+    "Open Scripts Folder": "Abrir carpeta de scripts",
+    "Could not open mpv.conf": "No se pudo abrir mpv.conf",
+    "Could not open scripts folder": "No se pudo abrir la carpeta de scripts",
+    "Stats overlay unavailable": "Estadísticas de superposición no disponibles"
 }

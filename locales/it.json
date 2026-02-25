@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Analisi durate completata ({}/{})",
     "Duration scan cancelled ({}/{})": "Analisi durate annullata ({}/{})",
     "All local item durations are already known": "Tutte le durate degli elementi locali sono già note",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Analizzare ora la durata di {} elementi locali della playlist?\nLa riproduzione rimarrà in pausa fino al completamento o all'annullamento dell'analisi."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Analizzare ora la durata di {} elementi locali della playlist?\nLa riproduzione rimarrà in pausa fino al completamento o all'annullamento dell'analisi.",
+    "Imported 0, failed {}": "Importati 0, falliti {}",
+    "Imported {}, failed {}": "Importati {}, falliti {}",
+    "Restore last session playlist": "Ripristina l'ultima playlist di sessione",
+    "No saved session playlist": "Nessuna playlist di sessione salvata",
+    "Restored {} session items": "{} elementi di sessione ripristinati",
+    "Saved session playlist is empty": "La playlist salvata di sessione è vuota",
+    "Could not restore session playlist": "Impossibile ripristinare la playlist di sessione",
+    "Open file(s)": "Apri file",
+    "Open folder": "Apri cartella",
+    "Open URL dialog": "Apri finestra URL",
+    "Open Advanced Config (mpv.conf)": "Apri configurazione avanzata (mpv.conf)",
+    "Open Scripts Folder": "Apri cartella script",
+    "Could not open mpv.conf": "Impossibile aprire mpv.conf",
+    "Could not open scripts folder": "Impossibile aprire la cartella script",
+    "Stats overlay unavailable": "Overlay statistiche non disponibile"
 }

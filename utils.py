@@ -33,6 +33,15 @@ def get_user_data_path(filename: str) -> str:
         # In dev mode, keep it local for easy access
         return str(Path(__file__).parent / filename)
 
+
+def get_user_data_dir() -> Path:
+    """Get writable base directory for app-managed user files."""
+    if getattr(sys, "frozen", False):
+        app_data = Path(os.getenv("APPDATA")) / "CadrePlayer"
+        app_data.mkdir(parents=True, exist_ok=True)
+        return app_data
+    return Path(__file__).parent
+
 def format_duration(seconds: float) -> str:
     if seconds is None:
         return "--:--"

@@ -13,15 +13,17 @@ from PySide6.QtCore import (
     QDataStream,
     QIODevice,
 )
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QStyle,
+    QStyleOptionSlider,
     QStyledItemDelegate,
     QLabel,
     QListView,
     QMainWindow,
     QSlider,
+    QToolTip,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -362,6 +364,167 @@ class ClickableSlider(QSlider):
         super().mousePressEvent(event)
 
 
+class ChapterSlider(ClickableSlider):
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._chapters: list[dict] = []
+        self._current_time: float = 0.0
+        self._hover_index: int = -1
+        self._snap_threshold_px: int = 8
+        self.setMouseTracking(True)
+
+    @staticmethod
+    def _fmt_seconds(value: float) -> str:
+        sec = max(0, int(round(float(value or 0))))
+        h = sec // 3600
+        m = (sec % 3600) // 60
+        s = sec % 60
+        if h > 0:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
+
+    def _groove_rect(self) -> QRect:
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        return self.style().subControlRect(
+            QStyle.CC_Slider,
+            opt,
+            QStyle.SC_SliderGroove,
+            self,
+        )
+
+    def _chapter_positions(self) -> list[tuple[int, int, float, str]]:
+        if self.orientation() != Qt.Horizontal:
+            return []
+        maximum = int(self.maximum())
+        if maximum <= 0 or not self._chapters:
+            return []
+        groove = self._groove_rect()
+        if groove.width() <= 1:
+            return []
+        left = groove.left()
+        width = groove.width() - 1
+        points = []
+        for idx, chapter in enumerate(self._chapters):
+            sec = float(chapter.get("time", 0.0))
+            ratio = max(0.0, min(1.0, sec / maximum))
+            x = left + int(round(width * ratio))
+            title = str(chapter.get("title") or "")
+            points.append((idx, x, sec, title))
+        return points
+
+    def _nearest_marker(self, x: int) -> tuple[int, int, float, str] | None:
+        nearest = None
+        best_dist = self._snap_threshold_px + 1
+        for item in self._chapter_positions():
+            _, marker_x, _, _ = item
+            dist = abs(marker_x - int(x))
+            if dist < best_dist:
+                best_dist = dist
+                nearest = item
+        return nearest if best_dist <= self._snap_threshold_px else None
+
+    def set_current_time(self, seconds: float):
+        try:
+            self._current_time = max(0.0, float(seconds or 0.0))
+        except (TypeError, ValueError):
+            self._current_time = 0.0
+        self.update()
+
+    def set_chapters(self, chapters):
+        cleaned = []
+        for idx, chapter in enumerate(chapters or []):
+            if isinstance(chapter, dict):
+                raw = chapter.get("time")
+                title = str(chapter.get("title") or "")
+            else:
+                raw = chapter
+                title = ""
+            try:
+                sec = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if sec < 0:
+                continue
+            if not title:
+                title = f"Chapter {idx + 1}"
+            cleaned.append({"time": sec, "title": title})
+        self._chapters = cleaned
+        self._hover_index = -1
+        QToolTip.hideText()
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        nearest = self._nearest_marker(event.position().x())
+        new_hover = nearest[0] if nearest else -1
+        if new_hover != self._hover_index:
+            self._hover_index = new_hover
+            self.update()
+        if nearest:
+            _, _, sec, title = nearest
+            tip = f"{title}\n{self._fmt_seconds(sec)}"
+            QToolTip.showText(QCursor.pos(), tip, self)
+        else:
+            QToolTip.hideText()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_index = -1
+        QToolTip.hideText()
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.orientation() == Qt.Horizontal and self._chapters:
+            nearest = self._nearest_marker(event.position().x())
+            if nearest:
+                _, _, sec, _ = nearest
+                self.setValue(int(round(sec)))
+                self.sliderMoved.emit(self.value())
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        points = self._chapter_positions()
+        if not points:
+            return
+        groove = self._groove_rect()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        top = max(0, groove.top() - 4)
+        bottom = min(self.height() - 1, groove.bottom() + 4)
+
+        current_idx = -1
+        for idx, _, sec, _ in points:
+            if sec <= self._current_time + 1e-6:
+                current_idx = idx
+            else:
+                break
+
+        for idx, x, sec, _ in points:
+            is_first = idx == 0
+            is_hover = idx == self._hover_index
+            is_current = idx == current_idx
+            is_watched = sec <= self._current_time + 1e-6
+
+            color = QColor(215, 222, 233, 190)
+            width = 2
+            if is_first:
+                color = QColor(87, 214, 255, 230)
+            if is_watched:
+                color = QColor(109, 236, 174, 225)
+            if is_current:
+                color = QColor(255, 219, 92, 240)
+                width = 3
+            if is_hover:
+                color = QColor(255, 255, 255, 255)
+                width = max(width, 3)
+
+            painter.fillRect(QRect(x - (width // 2), top, width, bottom - top + 1), color)
+
+
 class RoundedPanel(QWidget):
     def __init__(self, parent=None, radius: int = 16):
         super().__init__(parent)
@@ -399,8 +562,9 @@ class RoundedPanel(QWidget):
             curr = self.parent()
             while curr and not hasattr(curr, "owner"):
                 curr = curr.parent()
-            if curr and hasattr(curr.owner, "dropEvent"):
-                curr.owner.dropEvent(event)
+            if curr and hasattr(curr.owner, "handle_drop_urls"):
+                target = "playlist" if self.objectName() == "PlaylistPanel" else "video"
+                curr.owner.handle_drop_urls(event.mimeData().urls(), drop_target=target)
                 event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -430,7 +594,8 @@ class OverlayWindow(QWidget):
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
             # Propagate to owner manually but accept so it doesn't bubble naturally again
-            self.owner.dropEvent(event)
+            if hasattr(self.owner, "handle_drop_urls"):
+                self.owner.handle_drop_urls(event.mimeData().urls(), drop_target="video")
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -467,8 +632,8 @@ class PlaylistWidget(QListView):
             curr = self.parent()
             while curr and not hasattr(curr, "owner"):
                 curr = curr.parent()
-            if curr and hasattr(curr.owner, "dropEvent"):
-                curr.owner.dropEvent(event)
+            if curr and hasattr(curr.owner, "handle_drop_urls"):
+                curr.owner.handle_drop_urls(event.mimeData().urls(), drop_target="playlist")
                 event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -530,7 +695,8 @@ class PillOverlayWindow(QWidget):
 
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
-            self.owner.dropEvent(event)
+            if hasattr(self.owner, "handle_drop_urls"):
+                self.owner.handle_drop_urls(event.mimeData().urls(), drop_target="video")
         else:
             super().dropEvent(event)
 

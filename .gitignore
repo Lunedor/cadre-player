@@ -18,6 +18,8 @@ sdist/
 var/
 wheels/
 releases/
+scripts/
+scripts-opt/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -42,8 +44,10 @@ Thumbs.db
 *.tmp
 *.reg
 *.spec
+mpv.config
 todo.md
 logs.txt
+settings.ini
 py_video/settings.json
 py_video/resume_info.json
 

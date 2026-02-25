@@ -16,6 +16,36 @@ STREAM_AUTH_USERNAME_KEY = "network/stream_auth_username"
 STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
 STREAM_QUALITY_KEY = "network/stream_quality"
 
+def _to_int(value, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = int(default)
+    if min_value is not None:
+        number = max(min_value, number)
+    if max_value is not None:
+        number = min(max_value, number)
+    return number
+
+
+def _to_float(value, default: float, min_value: float | None = None, max_value: float | None = None) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    if min_value is not None:
+        number = max(min_value, number)
+    if max_value is not None:
+        number = min(max_value, number)
+    return number
+
+
+def _to_choice(value, default: str, allowed: set[str]) -> str:
+    token = str(value or "").strip()
+    if token in allowed:
+        return token
+    return default
+
 def get_settings() -> QSettings:
     """Returns a QSettings object pointing to a visible .ini file."""
     path = get_user_data_path("settings.ini")
@@ -99,11 +129,15 @@ def save_repeat(value: int) -> None:
 def load_sub_settings():
     settings = get_settings()
     return {
-        "font_size": int(settings.value(SUB_FONT_SIZE_KEY, 55)),
+        "font_size": _to_int(settings.value(SUB_FONT_SIZE_KEY, 55), 55, 1, 120),
         "color": str(settings.value(SUB_COLOR_KEY, "#FFFFFF")),
-        "pos": int(settings.value(SUB_POS_KEY, 100)),
-        "delay": float(settings.value(SUB_DELAY_KEY, 0.0)),
-        "back_style": str(settings.value(SUB_BACK_STYLE_KEY, "Shadow")),
+        "pos": _to_int(settings.value(SUB_POS_KEY, 100), 100, 0, 100),
+        "delay": _to_float(settings.value(SUB_DELAY_KEY, 0.0), 0.0, -600.0, 600.0),
+        "back_style": _to_choice(
+            settings.value(SUB_BACK_STYLE_KEY, "Shadow"),
+            "Shadow",
+            {"None", "Shadow", "Outline", "Opaque Box"},
+        ),
     }
 
 
@@ -126,19 +160,36 @@ VIDEO_ZOOM_KEY = "video/zoom"
 VIDEO_ROTATE_KEY = "video/rotate"
 VIDEO_HWDEC_KEY = "video/hwdec"
 VIDEO_RENDERER_KEY = "video/renderer"
+VIDEO_GPU_API_KEY = "video/gpu_api"
 
 
 def load_video_settings():
     settings = get_settings()
+    rotate = _to_int(settings.value(VIDEO_ROTATE_KEY, 0), 0)
+    if rotate not in {0, 90, 180, 270}:
+        rotate = 0
     return {
-        "brightness": int(settings.value(VIDEO_BRIGHTNESS_KEY, 0)),
-        "contrast": int(settings.value(VIDEO_CONTRAST_KEY, 0)),
-        "saturation": int(settings.value(VIDEO_SATURATION_KEY, 0)),
-        "gamma": int(settings.value(VIDEO_GAMMA_KEY, 0)),
-        "zoom": float(settings.value(VIDEO_ZOOM_KEY, 0.0)),
-        "rotate": int(settings.value(VIDEO_ROTATE_KEY, 0)),
-        "hwdec": settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
-        "renderer": settings.value(VIDEO_RENDERER_KEY, "gpu"),
+        "brightness": _to_int(settings.value(VIDEO_BRIGHTNESS_KEY, 0), 0, -100, 100),
+        "contrast": _to_int(settings.value(VIDEO_CONTRAST_KEY, 0), 0, -100, 100),
+        "saturation": _to_int(settings.value(VIDEO_SATURATION_KEY, 0), 0, -100, 100),
+        "gamma": _to_int(settings.value(VIDEO_GAMMA_KEY, 0), 0, -100, 100),
+        "zoom": _to_float(settings.value(VIDEO_ZOOM_KEY, 0.0), 0.0, -2.0, 10.0),
+        "rotate": rotate,
+        "hwdec": _to_choice(
+            settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
+            "auto-safe",
+            {"no", "auto", "auto-safe", "d3d11va", "nvdec"},
+        ),
+        "renderer": _to_choice(
+            settings.value(VIDEO_RENDERER_KEY, "gpu"),
+            "gpu",
+            {"gpu", "gpu-next"},
+        ),
+        "gpu_api": _to_choice(
+            settings.value(VIDEO_GPU_API_KEY, "auto"),
+            "auto",
+            {"auto", "vulkan", "d3d11", "opengl"},
+        ),
     }
 
 
@@ -152,6 +203,7 @@ def save_video_settings(config: dict):
     if "rotate" in config: settings.setValue(VIDEO_ROTATE_KEY, int(config["rotate"]))
     if "hwdec" in config: settings.setValue(VIDEO_HWDEC_KEY, config["hwdec"])
     if "renderer" in config: settings.setValue(VIDEO_RENDERER_KEY, config["renderer"])
+    if "gpu_api" in config: settings.setValue(VIDEO_GPU_API_KEY, config["gpu_api"])
     settings.sync()
 
 

@@ -2,10 +2,11 @@ import os
 import re
 import base64
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 import time
@@ -14,7 +15,8 @@ import math
 import mpv
 
 from PySide6.QtCore import QDateTime, QTimer, Qt, QEvent, QPoint, QThread, Signal
-from PySide6.QtGui import QColor, QCursor, QIcon
+from PySide6.QtGui import QColor, QCursor, QIcon, QDesktopServices
+from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -89,6 +91,7 @@ from .ui.styles import PANEL_STYLE, PLAYLIST_STYLE, MENU_STYLE, TITLE_BAR_STYLE
 from .ui.dialogs import SubtitleSettingsDialog, VideoSettingsDialog, URLInputDialog
 from .i18n import tr
 from .ui.widgets import (
+    ChapterSlider,
     ClickableSlider,
     IconButton,
     OverlayWindow,
@@ -113,12 +116,14 @@ from .utils import (
     is_audio_file,
     list_folder_media,
     collect_paths,
+    get_user_data_path,
     reveal_path,
     delete_to_trash as util_delete_to_trash,
 )
 from .playlist import DurationScanner
 from .ui.menus import create_main_context_menu, create_playlist_context_menu
 from .logic import PlayerLogic
+from .mpv_power_config import ensure_mpv_power_user_layout
 
 try:
     import yt_dlp
@@ -172,6 +177,51 @@ def _normalize_youtube_item_url(item_url: str) -> str:
     return ""
 
 
+def _youtube_direct_video_url(url: str) -> str:
+    try:
+        parsed = urlparse(str(url or "").strip())
+        host = (parsed.netloc or "").lower()
+        if "youtu.be" in host:
+            yid = parsed.path.strip("/").split("/", 1)[0]
+            if re.fullmatch(r"[A-Za-z0-9_-]{11}", yid or ""):
+                return f"https://www.youtube.com/watch?v={yid}"
+            return ""
+        if "youtube.com" in host or "music.youtube.com" in host:
+            yid = parse_qs(parsed.query).get("v", [""])[0].strip()
+            if re.fullmatch(r"[A-Za-z0-9_-]{11}", yid or ""):
+                return f"https://www.youtube.com/watch?v={yid}"
+            return ""
+    except Exception:
+        return ""
+    return ""
+
+
+def _youtube_looks_like_playlist_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or "").strip())
+        if not _is_youtube_url(url):
+            return False
+        q = parse_qs(parsed.query or "")
+        if q.get("list"):
+            return True
+        path = (parsed.path or "").lower()
+        return path.startswith("/playlist")
+    except Exception:
+        return False
+
+
+def _sanitize_http_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return raw
+    parts = urlsplit(raw)
+    if not parts.scheme or not parts.netloc:
+        return raw
+    path = quote(unquote(parts.path or ""), safe="/:@%+,-._~()")
+    query = quote(unquote(parts.query or ""), safe="=&:@%+,-._~")
+    return urlunsplit((parts.scheme, parts.netloc, path, query, parts.fragment))
+
+
 def _parse_m3u_text(text: str, base_url: str) -> list[str]:
     items = []
     seen = set()
@@ -185,6 +235,74 @@ def _parse_m3u_text(text: str, base_url: str) -> list[str]:
         if key not in seen:
             seen.add(key)
             items.append(line)
+    return items
+
+
+def _looks_like_m3u_path(path: str) -> bool:
+    lower = str(path or "").strip().lower()
+    return lower.endswith(".m3u") or lower.endswith(".m3u8")
+
+
+def _parse_local_m3u_with_meta(path: str) -> tuple[list[str], dict[str, str], dict[str, float]]:
+    items = []
+    seen = set()
+    title_map: dict[str, str] = {}
+    duration_map: dict[str, float] = {}
+    pending_title = ""
+    pending_duration: float | None = None
+    playlist_path = os.path.abspath(str(path))
+    base_dir = os.path.dirname(playlist_path)
+    with open(playlist_path, "r", encoding="utf-8-sig", errors="replace") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("#EXTINF:"):
+                payload = line[len("#EXTINF:"):].strip()
+                dur_part, sep, title_part = payload.partition(",")
+                pending_title = title_part.strip() if sep else ""
+                pending_duration = None
+                try:
+                    dur_value = float(dur_part.strip())
+                    if dur_value >= 0:
+                        pending_duration = dur_value
+                except Exception:
+                    pending_duration = None
+                continue
+            if line.startswith("#"):
+                continue
+            if _is_stream_url(line):
+                entry = line
+            else:
+                # Accept file:// entries in local playlists.
+                file_url = QUrl(line)
+                if file_url.isValid() and file_url.isLocalFile():
+                    line = file_url.toLocalFile()
+                expanded = os.path.expandvars(os.path.expanduser(line))
+                candidate = (
+                    expanded
+                    if os.path.isabs(expanded)
+                    else os.path.join(base_dir, expanded)
+                )
+                candidate = os.path.abspath(os.path.normpath(candidate))
+                if not os.path.exists(candidate):
+                    continue
+                entry = candidate
+            _, key = _normalize_playlist_entry(entry)
+            if key not in seen:
+                seen.add(key)
+                items.append(entry)
+                if pending_title:
+                    title_map[entry] = pending_title
+                if pending_duration is not None:
+                    duration_map[entry] = float(pending_duration)
+            pending_title = ""
+            pending_duration = None
+    return items, title_map, duration_map
+
+
+def _parse_local_m3u(path: str) -> list[str]:
+    items, _, _ = _parse_local_m3u_with_meta(path)
     return items
 
 def _auth_header(auth: Optional[dict]) -> Optional[str]:
@@ -201,6 +319,7 @@ def _auth_header(auth: Optional[dict]) -> Optional[str]:
 
 
 def _fetch_remote_m3u(url: str, auth: Optional[dict] = None) -> list[str]:
+    safe_url = _sanitize_http_url(url)
     headers = {
         "User-Agent": "CadrePlayer/1.0 (+https://github.com/)",
         "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*",
@@ -209,13 +328,13 @@ def _fetch_remote_m3u(url: str, auth: Optional[dict] = None) -> list[str]:
     if auth_value:
         headers["Authorization"] = auth_value
     req = Request(
-        url,
+        safe_url,
         headers=headers,
     )
     with urlopen(req, timeout=6) as resp:
         body = resp.read()
     text = body.decode("utf-8-sig", errors="replace")
-    items = _parse_m3u_text(text, url)
+    items = _parse_m3u_text(text, safe_url)
     if items:
         return items
     probe = text.lstrip().lower()
@@ -232,12 +351,15 @@ def _looks_like_directory_stream_url(url: str) -> bool:
     host = (parsed.netloc or "").lower()
     if path.endswith("/"):
         return True
-    if "." not in Path(path).name:
-        return True
-    return "dav." in host or "webdav" in host
+    name = Path(path).name
+    # Looks like a concrete file path (e.g. *.mkv) -> treat as direct stream URL.
+    if "." in name:
+        return False
+    return True
 
 
 def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[str], list[str]]:
+    safe_url = _sanitize_http_url(url)
     headers = {
         "User-Agent": "CadrePlayer/1.0 (+https://github.com/)",
         "Depth": "1",
@@ -251,7 +373,7 @@ def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[s
         b'<?xml version="1.0" encoding="utf-8" ?>'
         b'<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>'
     )
-    req = Request(url, data=body, headers=headers, method="PROPFIND")
+    req = Request(safe_url, data=body, headers=headers, method="PROPFIND")
     with urlopen(req, timeout=4) as resp:
         raw = resp.read()
     xml_text = raw.decode("utf-8", errors="replace")
@@ -259,13 +381,13 @@ def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[s
 
     files = []
     dirs = []
-    base_norm = url.rstrip("/") + "/"
+    base_norm = safe_url.rstrip("/") + "/"
     for resp in root.findall(".//{DAV:}response"):
         href_node = resp.find("{DAV:}href")
         if href_node is None or not href_node.text:
             continue
         href = unquote(href_node.text.strip())
-        absolute = urljoin(url, href)
+        absolute = urljoin(safe_url, href)
         norm = absolute.rstrip("/") + "/"
         if norm == base_norm:
             continue
@@ -281,10 +403,10 @@ def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[s
 def _fetch_webdav_files_recursive(
     url: str,
     auth: Optional[dict] = None,
-    max_depth: int = 10,
-    max_items: int = 5000,
-    max_requests: int = 200,
-    max_seconds: int = 300,
+    max_depth: int = 6,
+    max_items: int = 8000,
+    max_requests: int = 750,
+    max_seconds: int = 400,
 ) -> list[str]:
     files = []
     queue = [(url.rstrip("/") + "/", 0)]
@@ -349,6 +471,7 @@ def _extract_youtube_entries(url: str) -> tuple[list[dict], str]:
 
     opts = {
         "quiet": True,
+        "no_warnings": True,
         "skip_download": True,
         "extract_flat": "in_playlist",
         "noplaylist": False,
@@ -440,7 +563,7 @@ def _extract_youtube_entries(url: str) -> tuple[list[dict], str]:
 
 
 class URLResolveWorker(QThread):
-    finished_urls = Signal(list, dict, dict, str)
+    finished_urls = Signal(list, dict, dict, str, list)
     progress_count = Signal(int)
 
     def __init__(self, raw_urls, auth=None):
@@ -452,6 +575,8 @@ class URLResolveWorker(QThread):
         all_items = []
         title_map = {}
         duration_map = {}
+        failures = []
+        failure_seen = set()
         seen = set()
         last_error = ""
 
@@ -462,6 +587,18 @@ class URLResolveWorker(QThread):
 
         self.progress_count.emit(0)
         logging.info("URL resolve worker started: raw_count=%d", len(self.raw_urls))
+
+        def _record_failure(source: str, reason: str):
+            src = str(source or "").strip()
+            msg = str(reason or "").strip()
+            if not src or not msg:
+                return
+            key = (src.casefold(), msg.casefold())
+            if key in failure_seen:
+                return
+            failure_seen.add(key)
+            failures.append({"source": src, "reason": msg})
+
         try:
             for raw in self.raw_urls:
                 if self.isInterruptionRequested():
@@ -471,35 +608,43 @@ class URLResolveWorker(QThread):
                 if not url:
                     continue
                 source_kind = "direct"
+                source_error = ""
                 logging.info("Resolving URL: kind=unknown raw=%s", url)
 
                 try:
                     if _is_youtube_url(url):
                         source_kind = "youtube"
-                        logging.info("Resolving URL as YouTube: %s", url)
-                        entries, yt_error = _extract_youtube_entries(url)
-                        _set_error(yt_error)
-                        resolved = []
-                        for e in entries:
-                            item_url = e.get("url")
-                            if not item_url:
-                                continue
-                            resolved.append(str(item_url))
-                            if e.get("title"):
-                                title_map[str(item_url)] = str(e["title"])
-                            if e.get("duration") is not None:
-                                try:
-                                    duration_map[str(item_url)] = float(e["duration"])
-                                except Exception:
-                                    pass
-                        if not resolved:
-                            _set_error("no playable YouTube entries found")
-                        logging.info(
-                            "YouTube resolve result: url=%s items=%d error=%s",
-                            url,
-                            len(resolved),
-                            yt_error or "",
-                        )
+                        direct_video = _youtube_direct_video_url(url)
+                        if direct_video and not _youtube_looks_like_playlist_url(url):
+                            # Fast-path direct YouTube videos: avoid per-item yt-dlp extraction.
+                            resolved = [direct_video]
+                            logging.info("Resolving URL as direct YouTube video: %s", url)
+                        else:
+                            logging.info("Resolving URL as YouTube extract: %s", url)
+                            entries, yt_error = _extract_youtube_entries(url)
+                            _set_error(yt_error)
+                            resolved = []
+                            for e in entries:
+                                item_url = e.get("url")
+                                if not item_url:
+                                    continue
+                                resolved.append(str(item_url))
+                                if e.get("title"):
+                                    title_map[str(item_url)] = str(e["title"])
+                                if e.get("duration") is not None:
+                                    try:
+                                        duration_map[str(item_url)] = float(e["duration"])
+                                    except Exception:
+                                        pass
+                            if not resolved:
+                                source_error = yt_error or "no playable YouTube entries found"
+                                _set_error(source_error)
+                            logging.info(
+                                "YouTube resolve result: url=%s items=%d error=%s",
+                                url,
+                                len(resolved),
+                                yt_error or "",
+                            )
                     elif _looks_like_m3u_url(url):
                         source_kind = "m3u"
                         logging.info("Resolving URL as remote playlist: %s", url)
@@ -514,56 +659,76 @@ class URLResolveWorker(QThread):
                             raise ValueError("no media files found in webdav folder")
                     else:
                         logging.info("Resolving URL as direct stream: %s", url)
-                        resolved = [url]
+                        resolved = [_sanitize_http_url(url)]
                 except HTTPError as e:
                     logging.warning("URL resolve HTTP error: kind=%s url=%s code=%s", source_kind, url, e.code)
                     if e.code in (401, 403):
                         if source_kind == "webdav":
-                            _set_error("webdav authentication failed")
+                            source_error = "webdav authentication failed"
+                            _set_error(source_error)
                         else:
-                            _set_error("authentication failed")
+                            source_error = "authentication failed"
+                            _set_error(source_error)
                     else:
-                        _set_error(f"http {e.code}")
+                        source_error = f"http {e.code}"
+                        _set_error(source_error)
                     resolved = [] if source_kind in {"youtube", "m3u", "webdav"} else [url]
                 except PermissionError as e:
                     logging.warning("URL resolve permission error: kind=%s url=%s err=%s", source_kind, url, e)
-                    _set_error(str(e))
+                    source_error = str(e)
+                    _set_error(source_error)
                     resolved = []
                 except TimeoutError:
                     logging.warning("URL resolve timeout: kind=%s url=%s", source_kind, url)
                     if source_kind == "webdav":
-                        _set_error("webdav request timed out")
+                        source_error = "webdav request timed out"
+                        _set_error(source_error)
                     else:
-                        _set_error("timeout")
+                        source_error = "timeout"
+                        _set_error(source_error)
                     resolved = [] if source_kind in {"youtube", "m3u", "webdav"} else [url]
                 except (URLError, ValueError):
                     logging.warning("URL resolve invalid/unreachable: kind=%s url=%s", source_kind, url)
                     if source_kind == "webdav":
-                        _set_error("invalid/unreachable WebDAV URL or response")
+                        source_error = "invalid/unreachable WebDAV URL or response"
+                        _set_error(source_error)
                     elif source_kind == "m3u":
-                        _set_error("invalid/unreachable playlist URL")
+                        source_error = "invalid/unreachable playlist URL"
+                        _set_error(source_error)
                     elif source_kind == "youtube":
-                        _set_error("invalid/unreachable YouTube URL")
+                        source_error = "invalid/unreachable YouTube URL"
+                        _set_error(source_error)
                     else:
-                        _set_error("invalid or unreachable URL")
+                        source_error = "invalid or unreachable URL"
+                        _set_error(source_error)
                     resolved = [] if source_kind in {"youtube", "m3u", "webdav"} else [url]
                 except Exception as e:
                     logging.exception("URL resolve unexpected error: kind=%s url=%s err=%s", source_kind, url, e)
                     if source_kind == "webdav":
-                        _set_error("could not resolve WebDAV folder")
+                        source_error = "could not resolve WebDAV folder"
+                        _set_error(source_error)
                     elif source_kind == "m3u":
-                        _set_error("could not resolve remote playlist")
+                        source_error = "could not resolve remote playlist"
+                        _set_error(source_error)
                     elif source_kind == "youtube":
-                        _set_error("could not extract YouTube entries")
+                        source_error = "could not extract YouTube entries"
+                        _set_error(source_error)
                     else:
-                        _set_error("could not resolve URL")
+                        source_error = "could not resolve URL"
+                        _set_error(source_error)
                     resolved = [] if source_kind in {"youtube", "m3u", "webdav"} else [url]
 
+                if not resolved and source_error:
+                    _record_failure(url, source_error)
+
                 for item in resolved:
-                    key = str(item).casefold()
+                    item_value = str(item)
+                    if _is_stream_url(item_value):
+                        item_value = _sanitize_http_url(item_value)
+                    key = item_value.casefold()
                     if key not in seen:
                         seen.add(key)
-                        all_items.append(str(item))
+                        all_items.append(item_value)
                         if len(all_items) % 20 == 0:
                             self.progress_count.emit(len(all_items))
         except Exception:
@@ -572,14 +737,15 @@ class URLResolveWorker(QThread):
                 last_error = "URL resolver crashed"
         finally:
             logging.info(
-                "URL resolve worker finished: resolved=%d titles=%d durations=%d error=%s",
+                "URL resolve worker finished: resolved=%d titles=%d durations=%d failures=%d error=%s",
                 len(all_items),
                 len(title_map),
                 len(duration_map),
+                len(failures),
                 last_error,
             )
             self.progress_count.emit(len(all_items))
-            self.finished_urls.emit(all_items, title_map, duration_map, last_error)
+            self.finished_urls.emit(all_items, title_map, duration_map, last_error, failures)
 
 
 def _normalize_playlist_entry(value) -> tuple[str, str]:
@@ -631,14 +797,17 @@ class PlaylistPrepareWorker(QThread):
 
 
 class ProOverlayPlayer(QMainWindow, PlayerLogic):
+    _mpv_event_signal = Signal(str)
+
     def __init__(self):
         QMainWindow.__init__(self)
         PlayerLogic.__init__(self)
         logging.info("ProOverlayPlayer init: module=%s", __file__)
         
         self.setWindowTitle("Cadre Player")
+        self._empty_window_size = (720, 720)
         self.setMinimumSize(720, 480)
-        self.resize(720, 480)
+        self.resize(*self._empty_window_size)
         self.setAcceptDrops(True)
         self.setWindowIcon(get_app_icon())
 
@@ -661,8 +830,12 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._next_ui_poll_at = 0.0
         self._next_track_switch_allowed_at = 0.0
         self._pending_resize_check = False
-        self._track_switch_cooldown = 0.22
-        self._manual_switch_delay_ms = 140
+        self._resize_sync_deadline = 0.0
+        self._resize_stable_hits = 0
+        self._last_resize_dims = None
+        self._track_switch_cooldown = 1.10
+        self._manual_switch_settle_sec = 1.10
+        self._manual_switch_delay_ms = 240
         self._switch_request_id = 0
         self._next_loadfile_allowed_at = 0.0
         self._loadfile_cooldown = 0.32
@@ -673,11 +846,16 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._full_duration_scan_total = 0
         self._full_duration_scan_done = 0
         self._mpv_event_callback_enabled = False
+        self._is_engine_busy = False
+        self._last_load_attempt_at = 0.0
+        self._engine_busy_timeout_sec = 5.0
+        self._engine_busy_settle_sec = 0.95
         self._last_track_switch_time = 0.0
         self._next_duration_scan_attempt_at = 0.0
         self._last_position = 0.0
         self._last_duration = 0.0
         self._last_progress_time = 0.0
+        self._unsafe_mpv_read_allowed_at = 0.0
         self._last_seek_cmd_time = 0.0
         self._auto_next_deadline = 0.0
         self._user_paused = False
@@ -690,6 +868,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._active_url_request = None
         self._url_queue = []
         self._url_resolve_active = False
+        self._is_shutting_down = False
         self._url_status_timer = QTimer(self)
         self._url_status_timer.setInterval(450)
         self._url_status_timer.timeout.connect(self._refresh_url_resolve_status)
@@ -705,6 +884,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._import_status_timer.timeout.connect(self._refresh_import_status)
         self._import_progress_active = False
         self._import_progress_count = 0
+        self._script_bindings_cache = {}
+        self._script_bindings_mtime = 0.0
         self._search_debounce_timer = QTimer(self)
         self._search_debounce_timer.setSingleShot(True)
         self._search_debounce_timer.setInterval(120)
@@ -718,12 +899,17 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.setCentralWidget(self.central_widget)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.open_main_context_menu)
+        self._mpv_event_signal.connect(
+            self._process_mpv_event_on_main_thread,
+            Qt.QueuedConnection,
+        )
 
         # Session-only toggle: do not persist Always-On-Top across relaunch.
         self.always_on_top = False
 
         v_config = load_video_settings()
         self.window_zoom = float(v_config.get("zoom", 0.0))
+        self._aspect_ratio_setting = load_aspect_ratio()
 
         pinned = load_pinned_settings()
         self.pinned_controls = pinned["controls"]
@@ -735,6 +921,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.video_container = QWidget(self.central_widget)
         self.video_container.setAttribute(Qt.WA_NativeWindow)
         self.video_container.setStyleSheet("background-color: black;")
+
+        self.resize_corner_hint = QWidget(self.video_container)
+        self.resize_corner_hint.setFixedSize(14, 14)
+        self.resize_corner_hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.resize_corner_hint.setStyleSheet(
+            "background-color: rgba(255,255,255,28);"
+            "border-top: 1px solid rgba(255,255,255,65);"
+            "border-left: 1px solid rgba(255,255,255,65);"
+            "border-right: 0;"
+            "border-bottom: 0;"
+            "border-top-left-radius: 3px;"
+        )
+        self.resize_corner_hint.hide()
         
         self.background_widget = QWidget(self.video_container)
         self.background_widget.setGeometry(0, 0, self.width(), self.height())
@@ -750,16 +949,30 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         layout.addWidget(icon_label)
         layout.addWidget(text_label)
         self.background_widget.show()
-        
-        
+
+        self._power_user_paths = ensure_mpv_power_user_layout()
+        self._mpv_config_dir = self._power_user_paths["config_dir"]
+        self._mpv_conf_path = self._power_user_paths["mpv_conf_path"]
+        self._mpv_scripts_dir = self._power_user_paths["scripts_dir"]
+        logging.info(
+            "MPV power-user config: dir=%s mpv_conf=%s scripts=%s",
+            self._mpv_config_dir,
+            self._mpv_conf_path,
+            self._mpv_scripts_dir,
+        )
+
+
         self.player = mpv.MPV(
             wid=str(int(self.video_container.winId())),
             vo=v_config.get("renderer", "gpu"),
+            gpu_api=v_config.get("gpu_api", "auto"),
             hwdec=v_config.get("hwdec", "auto-safe"),
             hr_seek="yes",
             input_cursor="yes",
             input_vo_keyboard="yes",
-            config=False,
+            start_event_thread=False,
+            config=True,
+            config_dir=self._mpv_config_dir,
         )
         self.player.pause = True # Ensure we start in "Ready" state, not "Playing" ghost state
         self._cached_paused = True
@@ -790,7 +1003,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 self.player.register_event_callback(self._on_mpv_event)
             self.apply_subtitle_settings()
             self.apply_video_settings()
-            self.set_aspect_ratio(load_aspect_ratio())
+            self.set_aspect_ratio(self._aspect_ratio_setting)
             self.apply_equalizer_settings()
         except Exception:
             pass
@@ -840,12 +1053,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         save_video_settings(config)
 
     def _apply_mpv_startup_commands(self):
-        try:
-            self.player.command("script-message", "osc-visibility", "never")
-            self.player.command("set", "osc", "no")
-            self.player.command("set", "osd-level", "0")
-        except Exception:
-            pass
+        # Keep startup hook for diagnostics only.
+        # Do not override power-user mpv.conf values here.
+        logging.info("MPV startup hook: preserving mpv.conf runtime properties")
 
     def apply_stream_quality_setting(self):
         mapping = {
@@ -857,7 +1067,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         }
         fmt = mapping.get(self.stream_quality, mapping["best"])
         try:
-            self.player.command("set", "ytdl-format", fmt)
+            self.player.ytdl_format = fmt
         except Exception:
             pass
 
@@ -884,6 +1094,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         try:
             opts = {
                 "quiet": True,
+                "no_warnings": True,
                 "skip_download": True,
                 "noplaylist": True,
                 "extract_flat": False,
@@ -994,20 +1205,20 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.mute_btn = IconButton(parent=self)
         self.mute_btn.clicked.connect(self.toggle_mute)
 
-        self.seek_slider = ClickableSlider(Qt.Horizontal)
+        self.seek_slider = ChapterSlider(Qt.Horizontal)
         self.seek_slider.setFocusPolicy(Qt.NoFocus)
         self.seek_slider.sliderMoved.connect(self.seek_absolute)
         self.seek_slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.time_label = QLabel("00:00 / 00:00")
-        self.time_label.setMinimumWidth(120)
+        self.time_label.setMinimumWidth(104)
         self.time_label.setAlignment(Qt.AlignCenter)
 
         self.vol_slider = ClickableSlider(Qt.Horizontal)
         self.vol_slider.setFocusPolicy(Qt.NoFocus)
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setValue(self.saved_volume)
-        self.vol_slider.setFixedWidth(70)
+        self.vol_slider.setFixedWidth(56)
         self.vol_slider.valueChanged.connect(self.on_volume_changed)
 
         self.player.volume = self.saved_volume
@@ -1015,15 +1226,15 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._cached_muted = bool(self.saved_muted)
 
         layout = QHBoxLayout(self.overlay.panel)
-        layout.setContentsMargins(18, 0, 18, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(4)
         layout.addWidget(self.prev_btn)
         layout.addWidget(self.play_btn)
         layout.addWidget(self.stop_btn)
         layout.addWidget(self.next_btn)
-        layout.addSpacing(5)
+        layout.addSpacing(3)
         layout.addWidget(self.seek_slider, 1)
-        layout.addSpacing(5)
+        layout.addSpacing(3)
         layout.addWidget(self.time_label)
         layout.addWidget(self.mute_btn)
         layout.addWidget(self.vol_slider)
@@ -1050,6 +1261,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             return None
         had_title_bar = bool(hasattr(self, "title_bar") and self.title_bar.isVisible())
         self._context_menu_open = True
+        mouse_timer_was_active = bool(hasattr(self, "mouse_timer") and self.mouse_timer.isActive())
+        if mouse_timer_was_active:
+            self.mouse_timer.stop()
         if had_title_bar:
             self.title_bar.hide()
         try:
@@ -1062,8 +1276,56 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             return menu.exec(global_pos)
         finally:
             self._context_menu_open = False
+            if mouse_timer_was_active:
+                self.mouse_timer.start()
             if had_title_bar:
                 QTimer.singleShot(0, self._restore_title_bar_after_menu)
+
+    def _prepare_modal_window(self, widget):
+        if widget is None:
+            return
+        try:
+            widget.setWindowModality(Qt.ApplicationModal)
+        except Exception:
+            pass
+        try:
+            widget.setWindowFlag(Qt.WindowStaysOnTopHint, bool(self.always_on_top))
+        except Exception:
+            pass
+
+    def _exec_modal(self, widget):
+        self._prepare_modal_window(widget)
+        try:
+            widget.raise_()
+        except Exception:
+            pass
+        return widget.exec()
+
+    def _run_file_dialog(self, dialog: QFileDialog) -> list[str]:
+        result = self._exec_modal(dialog)
+        if result == QFileDialog.Accepted:
+            try:
+                return dialog.selectedFiles()
+            except Exception:
+                return []
+        return []
+
+    def _show_message(
+        self,
+        icon: QMessageBox.Icon,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButtons = QMessageBox.Ok,
+        default_button: QMessageBox.StandardButton = QMessageBox.NoButton,
+    ) -> QMessageBox.StandardButton:
+        box = QMessageBox(self)
+        box.setIcon(icon)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setStandardButtons(buttons)
+        if default_button != QMessageBox.NoButton:
+            box.setDefaultButton(default_button)
+        return QMessageBox.StandardButton(self._exec_modal(box))
 
     def _restore_title_bar_after_menu(self):
         if not hasattr(self, "title_bar"):
@@ -1158,6 +1420,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.save_playlist_btn.clicked.connect(self.save_playlist_m3u)
         self.save_playlist_btn.setIcon(QIcon(icon_save(22)))
 
+        self.restore_session_btn = IconButton(tooltip=tr("Restore last session playlist"), parent=self)
+        self.restore_session_btn.clicked.connect(self.restore_session_playlist)
+        self.restore_session_btn.setIcon(QIcon(icon_folder(22)))
+
 
         self.remove_btn = IconButton(tooltip=tr("Remove from playlist"), parent=self)
         self.remove_btn.clicked.connect(self.remove_selected_from_playlist)
@@ -1186,6 +1452,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         controls.addWidget(self.add_btn)
         controls.addWidget(self.open_playlist_btn)
         controls.addWidget(self.save_playlist_btn)
+        controls.addWidget(self.restore_session_btn)
         
         controls.addStretch(1)
         
@@ -1313,10 +1580,55 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         pos = self.mapToGlobal(QPoint(0, 0))
         self.title_bar.setGeometry(pos.x(), pos.y(), width, height)
 
+    def _enforce_overlay_stack(self):
+        # Keep overlay windows above the video surface in Always-On-Top mode,
+        # but do not interfere while menus/dialogs are active.
+        if not getattr(self, "always_on_top", False):
+            return
+        if self.isMinimized():
+            return
+        if QApplication.activeModalWidget() is not None:
+            return
+        if self._context_menu_open:
+            return
+        try:
+            self.raise_()
+        except Exception:
+            pass
+        for attr in ("overlay", "speed_overlay", "playlist_overlay", "title_bar"):
+            win = getattr(self, attr, None)
+            if win is None or not win.isVisible():
+                continue
+            try:
+                win.raise_()
+            except Exception:
+                pass
+
+    def _sync_overlay_topmost_flags(self):
+        enabled = bool(self.always_on_top)
+        for attr in ("overlay", "speed_overlay", "playlist_overlay", "title_bar"):
+            win = getattr(self, attr, None)
+            if win is None:
+                continue
+            try:
+                was_visible = win.isVisible()
+                win.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
+                if was_visible:
+                    win.show()
+            except Exception:
+                pass
+
     def _is_app_focused(self) -> bool:
+        if self.isMinimized():
+            return False
+        if self.isActiveWindow():
+            return True
         active_win = QApplication.activeWindow()
         if active_win is None:
-            return False
+            try:
+                return self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+            except Exception:
+                return False
         app_windows = [self] + [
             getattr(self, attr)
             for attr in ["title_bar", "overlay", "playlist_overlay", "speed_overlay"]
@@ -1329,9 +1641,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
 
     def check_mouse_pos(self):
+        if self.isMinimized():
+            for attr in ("title_bar", "overlay", "playlist_overlay", "speed_overlay"):
+                win = getattr(self, attr, None)
+                if win and win.isVisible():
+                    win.hide()
+            if hasattr(self, "resize_corner_hint"):
+                self.resize_corner_hint.hide()
+            return
         if not self._is_app_focused():
             if hasattr(self, "title_bar") and self.title_bar.isVisible():
                 self.title_bar.hide()
+            if hasattr(self, "resize_corner_hint"):
+                self.resize_corner_hint.hide()
             return
         if getattr(self, "_fullscreen_transition_active", False):
             return
@@ -1353,6 +1675,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             if self.cursor().shape() != Qt.SizeFDiagCursor:
                 self.setCursor(Qt.SizeFDiagCursor)
                 self.video_container.setCursor(Qt.SizeFDiagCursor)
+            if hasattr(self, "resize_corner_hint"):
+                self.resize_corner_hint.show()
+                self.resize_corner_hint.raise_()
         else:
             if global_pos != self.last_cursor_global_pos:
                 self.last_cursor_global_pos = global_pos
@@ -1361,6 +1686,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 if self.cursor().shape() != Qt.ArrowCursor:
                     self.setCursor(Qt.ArrowCursor)
                     self.video_container.setCursor(Qt.ArrowCursor)
+                if hasattr(self, "resize_corner_hint"):
+                    self.resize_corner_hint.hide()
             else:
                 if self.rect().contains(local_pos):
                     self.cursor_idle_time += 100
@@ -1368,8 +1695,12 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                         if self.cursor().shape() != Qt.BlankCursor:
                             self.setCursor(Qt.BlankCursor)
                             self.video_container.setCursor(Qt.BlankCursor)
+                            if hasattr(self, "resize_corner_hint"):
+                                self.resize_corner_hint.hide()
                 else:
                     self.cursor_idle_time = 0
+                    if hasattr(self, "resize_corner_hint"):
+                        self.resize_corner_hint.hide()
 
         # Overlay/Transport auto-show (bottom area)
         # ONLY show transport if playlist is hidden to avoid overlapping/blocking playlist buttons
@@ -1436,14 +1767,21 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         
         if self.isFullScreen() and self.title_bar.isVisible():
             self.title_bar.hide()
+        self._enforce_overlay_stack()
 
     def resizeEvent(self, event):
         self.video_container.setGeometry(0, 0, self.width(), self.height())
         self.background_widget.setGeometry(0, 0, self.width(), self.height())
+        if hasattr(self, "resize_corner_hint"):
+            self.resize_corner_hint.move(
+                max(0, self.video_container.width() - self.resize_corner_hint.width()),
+                max(0, self.video_container.height() - self.resize_corner_hint.height()),
+            )
         self._sync_overlay_geometry()
         self._sync_playlist_overlay_geometry()
         self._sync_speed_indicator_geometry()
-        self._sync_title_bar_geometry()            
+        self._sync_title_bar_geometry()
+        self._enforce_overlay_stack()
         super().resizeEvent(event)
 
     def moveEvent(self, event):
@@ -1451,6 +1789,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._sync_playlist_overlay_geometry()
         self._sync_speed_indicator_geometry()
         self._sync_title_bar_geometry()
+        self._enforce_overlay_stack()
         super().moveEvent(event)
 
     def changeEvent(self, event):
@@ -1460,6 +1799,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
         if event.type() == QEvent.WindowStateChange:
             self.update_fullscreen_icon()
+            if self.isMinimized():
+                for attr in ("title_bar", "overlay", "playlist_overlay", "speed_overlay"):
+                    win = getattr(self, attr, None)
+                    if win and win.isVisible():
+                        win.hide()
             if hasattr(self, "title_bar"):
                 if self.isMaximized():
                     self.title_bar.max_btn.setIcon(QIcon(icon_restore(18)))
@@ -1469,7 +1813,13 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         super().changeEvent(event)
 
     def closeEvent(self, event):
+        if self._is_shutting_down:
+            event.accept()
+            return
+        self._is_shutting_down = True
+
         self.save_current_resume_info()
+        self._save_session_playlist_snapshot()
         
         # Stop timers
         if hasattr(self, "mouse_timer"): self.mouse_timer.stop()
@@ -1483,14 +1833,14 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
         if self._active_url_worker is not None:
             self._active_url_worker.requestInterruption()
-            self._active_url_worker.wait(1500)
+            self._active_url_worker.quit()
             self._active_url_worker = None
             self._active_url_request = None
             self._url_queue.clear()
 
         if self._active_prepare_worker is not None:
             self._active_prepare_worker.requestInterruption()
-            self._active_prepare_worker.wait(1500)
+            self._active_prepare_worker.quit()
             self._active_prepare_worker = None
             self._active_prepare_request = None
             self._prepare_queue.clear()
@@ -1498,17 +1848,18 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             for scanner in list(self.scanners):
                 try:
                     scanner.requestInterruption()
-                    scanner.wait(300)
+                    scanner.quit()
                 except Exception:
                     pass
             self.scanners.clear()
             self._pending_duration_paths.clear()
-        
-        # Crucial: Shutdown MPV player properly
+
+        # Best-effort immediate stop to reduce native shutdown work.
         if hasattr(self, "player"):
             try:
-                self.player.terminate()
-            except:
+                self.player.command("stop")
+                self.player.pause = True
+            except Exception:
                 pass
 
         # Explicitly close and delete all overlay windows
@@ -1522,8 +1873,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         if app:
             app.removeEventFilter(self)
 
+        # Terminate mpv in a background thread to avoid blocking Qt closeEvent.
+        if hasattr(self, "player"):
+            player_ref = self.player
+
+            def _terminate_player():
+                try:
+                    player_ref.terminate()
+                except Exception:
+                    pass
+
+            threading.Thread(target=_terminate_player, daemon=True).start()
+
         super().closeEvent(event)
-        QApplication.quit()
 
     def _is_owned_by_player(self, obj):
         if obj is None:
@@ -1565,9 +1927,237 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             if self._is_playlist_search_focused() or self._is_playlist_widget_focused():
                 return super().eventFilter(obj, event)
 
+            # Let app-reserved shortcuts stay in Python; forward other keys to mpv/scripts.
+            if not self._is_app_shortcut_key(event):
+                if self._trigger_script_binding_for_event(event):
+                    return True
+                if self._forward_key_to_mpv(event):
+                    return True
+                return super().eventFilter(obj, event)
             self.keyPressEvent(event)
             return True
         return super().eventFilter(obj, event)
+
+    def _canonicalize_mpv_key(self, key_name: str) -> str:
+        text = str(key_name or "").strip()
+        if not text:
+            return ""
+        parts = [p for p in text.split("+") if p]
+        if not parts:
+            return ""
+        mods = []
+        base = parts[-1]
+        if len(base) > 1:
+            base = base.lower()
+        mod_order = {"ctrl": 0, "alt": 1, "shift": 2, "meta": 3}
+        for p in parts[:-1]:
+            low = p.strip().lower()
+            if low in mod_order and low not in mods:
+                mods.append(low)
+        mods.sort(key=lambda m: mod_order[m])
+        return "+".join(mods + [base])
+
+    def _refresh_script_bindings_cache(self):
+        scripts_dir = Path(getattr(self, "_mpv_scripts_dir", "") or "")
+        if not scripts_dir or not scripts_dir.exists():
+            self._script_bindings_cache = {}
+            self._script_bindings_mtime = 0.0
+            return
+
+        newest_mtime = 0.0
+        try:
+            lua_files = sorted(scripts_dir.rglob("*.lua"))
+        except Exception:
+            lua_files = []
+
+        for f in lua_files:
+            try:
+                newest_mtime = max(newest_mtime, float(f.stat().st_mtime))
+            except Exception:
+                pass
+
+        if newest_mtime and newest_mtime == self._script_bindings_mtime and self._script_bindings_cache:
+            return
+
+        pattern = re.compile(
+            r"mp\.add_(?:forced_)?key_binding\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]",
+            re.IGNORECASE,
+        )
+        cache = {}
+        for f in lua_files:
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            for key_name, binding_name in pattern.findall(text):
+                canonical = self._canonicalize_mpv_key(key_name)
+                if not canonical:
+                    continue
+                cache.setdefault(canonical, [])
+                if binding_name not in cache[canonical]:
+                    cache[canonical].append(binding_name)
+
+        self._script_bindings_cache = cache
+        self._script_bindings_mtime = newest_mtime
+
+    def _trigger_script_binding_for_event(self, event) -> bool:
+        key_name = self._qt_event_to_mpv_key(event)
+        if not key_name:
+            return False
+
+        self._refresh_script_bindings_cache()
+        canonical = self._canonicalize_mpv_key(key_name)
+        names = self._script_bindings_cache.get(canonical, [])
+        if not names:
+            return False
+
+        for binding_name in names:
+            try:
+                self.player.command("script-binding", binding_name)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _is_app_shortcut_key(self, event) -> bool:
+        key = event.key()
+        return key in {
+            Qt.Key_Escape,
+            Qt.Key_Right,
+            Qt.Key_Left,
+            Qt.Key_Up,
+            Qt.Key_Down,
+            Qt.Key_PageUp,
+            Qt.Key_PageDown,
+            Qt.Key_F4,
+            Qt.Key_Space,
+            Qt.Key_Enter,
+            Qt.Key_Return,
+            Qt.Key_F,
+            Qt.Key_Delete,
+            Qt.Key_Period,
+            Qt.Key_Comma,
+            Qt.Key_BracketRight,
+            Qt.Key_BracketLeft,
+            Qt.Key_Plus,
+            Qt.Key_Equal,
+            Qt.Key_Minus,
+            Qt.Key_0,
+            Qt.Key_2,
+            Qt.Key_4,
+            Qt.Key_6,
+            Qt.Key_8,
+            Qt.Key_B,
+            Qt.Key_M,
+            Qt.Key_S,
+            Qt.Key_P,
+            Qt.Key_V,
+            Qt.Key_R,
+            Qt.Key_G,
+            Qt.Key_H,
+            Qt.Key_J,
+            Qt.Key_K,
+            Qt.Key_I,
+            Qt.Key_U,
+            Qt.Key_O,
+            Qt.Key_L,
+        }
+
+    def _qt_event_to_mpv_key(self, event) -> str | None:
+        key = event.key()
+        if key in {
+            Qt.Key_Shift,
+            Qt.Key_Control,
+            Qt.Key_Alt,
+            Qt.Key_Meta,
+            Qt.Key_AltGr,
+        }:
+            return None
+
+        special = {
+            Qt.Key_Space: "SPACE",
+            Qt.Key_Enter: "ENTER",
+            Qt.Key_Return: "ENTER",
+            Qt.Key_Escape: "ESC",
+            Qt.Key_Tab: "TAB",
+            Qt.Key_Backspace: "BS",
+            Qt.Key_Delete: "DEL",
+            Qt.Key_Insert: "INS",
+            Qt.Key_Home: "HOME",
+            Qt.Key_End: "END",
+            Qt.Key_PageUp: "PGUP",
+            Qt.Key_PageDown: "PGDWN",
+            Qt.Key_Left: "LEFT",
+            Qt.Key_Right: "RIGHT",
+            Qt.Key_Up: "UP",
+            Qt.Key_Down: "DOWN",
+        }
+        if key in special:
+            base = special[key]
+        elif Qt.Key_F1 <= key <= Qt.Key_F12:
+            base = f"F{key - Qt.Key_F1 + 1}"
+        elif Qt.Key_A <= key <= Qt.Key_Z:
+            ch = chr(ord("a") + (key - Qt.Key_A))
+            if event.modifiers() & Qt.ShiftModifier:
+                ch = ch.upper()
+            base = ch
+        elif Qt.Key_0 <= key <= Qt.Key_9:
+            base = str(key - Qt.Key_0)
+        else:
+            text = event.text() or ""
+            if not text or not text.isprintable():
+                return None
+            if text == " ":
+                base = "SPACE"
+            else:
+                base = text
+
+        mods = event.modifiers()
+        parts = []
+        if mods & Qt.ControlModifier:
+            parts.append("ctrl")
+        if mods & Qt.AltModifier:
+            parts.append("alt")
+        if mods & Qt.MetaModifier:
+            parts.append("meta")
+
+        # For printable chars, Shift is already reflected in the text (e.g. "A", "?").
+        if (mods & Qt.ShiftModifier) and base.isupper() and len(base) > 1:
+            parts.append("shift")
+        elif (mods & Qt.ShiftModifier) and base in {
+            "ENTER", "ESC", "TAB", "BS", "DEL", "INS", "HOME", "END",
+            "PGUP", "PGDWN", "LEFT", "RIGHT", "UP", "DOWN",
+        }:
+            parts.append("shift")
+
+        if parts:
+            return "+".join(parts + [base])
+        return base
+
+    def _forward_key_to_mpv(self, event) -> bool:
+        key_name = self._qt_event_to_mpv_key(event)
+        if not key_name:
+            return False
+
+        try:
+            self.player.command("keypress", key_name)
+            return True
+        except Exception as first_err:
+            try:
+                keypress_fn = getattr(self.player, "keypress", None)
+                if callable(keypress_fn):
+                    keypress_fn(key_name)
+                    return True
+            except Exception as second_err:
+                logging.debug(
+                    "mpv key forward failed: key=%s cmd_err=%s method_err=%s",
+                    key_name,
+                    first_err,
+                    second_err,
+                )
+                return False
+            logging.debug("mpv key forward failed: key=%s cmd_err=%s", key_name, first_err)
+            return False
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1576,37 +2166,156 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         super().dragEnterEvent(event)
 
     def dropEvent(self, event):
-        paths = []
-        for url in event.mimeData().urls():
-            local = url.toLocalFile()
-            if local:
-                paths.append(Path(local))
-        self.handle_dropped_paths(paths)
-        # Note: We rely on the child widget (OverlayWindow) to accept the event if it forwarded it.
-        # If it's a direct drop on the main window, we can accept it here.
-        if event.isAccepted() == False:
+        target = "playlist" if self._is_cursor_over_playlist_panel() else "video"
+        self.handle_drop_urls(event.mimeData().urls(), drop_target=target)
+        if not event.isAccepted():
             event.acceptProposedAction()
 
-    def handle_dropped_paths(self, paths):
-        if not paths:
+    def _is_cursor_over_playlist_panel(self) -> bool:
+        return bool(
+            hasattr(self, "playlist_overlay")
+            and self.playlist_overlay.isVisible()
+            and self.playlist_overlay.geometry().contains(QCursor.pos())
+        )
+
+    def handle_drop_urls(self, urls, drop_target: str = "auto"):
+        local_paths = []
+        remote_urls = []
+        for qurl in urls or []:
+            local = qurl.toLocalFile()
+            if local:
+                local_paths.append(Path(local))
+                continue
+            value = qurl.toString().strip()
+            if value:
+                remote_urls.append(value)
+        self.handle_dropped_paths(local_paths, remote_urls=remote_urls, drop_target=drop_target)
+
+    def _clear_playlist_before_import(self):
+        self.stop_playback()
+        self.playlist = []
+        self.current_index = -1
+        self.rebuild_shuffle_order(keep_current=True)
+        self.refresh_playlist_view()
+        self._save_session_playlist_snapshot()
+
+    def _import_playlist_entries(
+        self,
+        entries,
+        replace_existing: bool = False,
+        label: str = "",
+        title_map: dict | None = None,
+        duration_map: dict | None = None,
+        resolve_stream_urls: bool = True,
+    ):
+        cleaned = [str(item).strip() for item in entries if str(item).strip()]
+        if not cleaned:
+            self.show_status_overlay(tr("No valid files in playlist"))
             return
 
+        title_map = dict(title_map or {})
+        duration_map = dict(duration_map or {})
+
+        if replace_existing:
+            self._clear_playlist_before_import()
+
+        is_idle = self._player_is_idle()
+        autoplay = bool(replace_existing or is_idle)
+
+        local_paths = [item for item in cleaned if not _is_stream_url(item)]
+        stream_urls = [item for item in cleaned if _is_stream_url(item)]
+
+        if local_paths:
+            local_titles = {k: v for k, v in title_map.items() if k in local_paths}
+            local_durations = {k: v for k, v in duration_map.items() if k in local_paths}
+            self.append_to_playlist_async(
+                local_paths,
+                play_new=autoplay,
+                on_done=lambda _new_items: None,
+                title_map=local_titles,
+                duration_map=local_durations,
+            )
+            autoplay = False
+        if stream_urls:
+            stream_titles = {k: v for k, v in title_map.items() if k in stream_urls}
+            stream_durations = {k: v for k, v in duration_map.items() if k in stream_urls}
+            if resolve_stream_urls:
+                self.import_stream_sources_async(
+                    stream_urls,
+                    play_new=autoplay,
+                    title_map=stream_titles,
+                    duration_map=stream_durations,
+                )
+            else:
+                self._register_stream_auth_rules(stream_urls, load_stream_auth_settings())
+                self.append_to_playlist_async(
+                    stream_urls,
+                    play_new=autoplay,
+                    on_done=lambda _new_items: None,
+                    title_map=stream_titles,
+                    duration_map=stream_durations,
+                )
+
+        action = tr("Loaded") if replace_existing else tr("Added")
+        if label:
+            self.show_status_overlay(f"{action} {label}")
+
+    def _import_dropped_m3u_sources(self, local_m3u_paths, remote_m3u_urls, replace_existing: bool):
+        entries = []
+        for playlist_path in local_m3u_paths:
+            try:
+                entries.extend(_parse_local_m3u(str(playlist_path)))
+            except Exception as e:
+                logging.warning("Could not parse local playlist drop: path=%s err=%s", playlist_path, e)
+
+        self._import_playlist_entries(
+            entries,
+            replace_existing=replace_existing,
+            label=tr("{} items").format(len(entries)) if entries else "",
+        )
+
+        if remote_m3u_urls:
+            self.import_stream_sources_async(
+                remote_m3u_urls,
+                play_new=bool(replace_existing and not entries),
+            )
+
+    def handle_dropped_paths(self, paths, remote_urls=None, drop_target: str = "auto"):
+        remote_urls = [str(u).strip() for u in (remote_urls or []) if str(u).strip()]
+        if not paths and not remote_urls:
+            return
+
+        effective_target = drop_target if drop_target in {"video", "playlist"} else "video"
         subtitle_exts = {'.srt', '.ass', '.ssa', '.sub', '.vtt'}
         media_files = []
         subtitle_files = []
         folders = []
+        local_m3u_files = []
         for p in paths:
             if p.is_file():
                 ext = p.suffix.lower()
                 if ext in subtitle_exts:
                     subtitle_files.append(str(p.resolve()))
+                elif _looks_like_m3u_path(str(p)):
+                    local_m3u_files.append(p)
                 elif self.is_video_file(p) or self.is_audio_file(p):
                     media_files.append(str(p.resolve()))
             elif p.is_dir():
                 folders.append(p)
 
+        remote_m3u_urls = [u for u in remote_urls if _looks_like_m3u_url(u)]
+        direct_stream_urls = [u for u in remote_urls if _is_stream_url(u) and not _looks_like_m3u_url(u)]
+
+        if local_m3u_files or remote_m3u_urls:
+            self._import_dropped_m3u_sources(
+                local_m3u_files,
+                remote_m3u_urls,
+                replace_existing=(effective_target == "video"),
+            )
+            return
+
         # If only subtitle(s) dropped and a media file is open, add subtitle(s)
-        if subtitle_files and not media_files and not folders:
+        if subtitle_files and not media_files and not folders and not direct_stream_urls:
             if self.player.time_pos is not None:
                 for sub in subtitle_files:
                     self.player.command("sub-add", sub)
@@ -1614,6 +2323,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             else:
                 self.show_status_overlay(tr("Open a video before adding subtitles"))
             return
+
+        if direct_stream_urls:
+            is_idle = self._player_is_idle()
+            self.import_stream_sources_async(direct_stream_urls, play_new=is_idle)
 
         # If media file(s) dropped, handle as before
         if media_files or folders:
@@ -1634,8 +2347,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             )
 
     def _ask_recursive_import(self) -> bool:
-        res = QMessageBox.question(
-            self,
+        res = self._show_message(
+            QMessageBox.Question,
             tr("Include Subfolders"),
             tr("Do you want to include media from subfolders as well?"),
             QMessageBox.Yes | QMessageBox.No,
@@ -1672,6 +2385,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.current_index = 0
         self.rebuild_shuffle_order(keep_current=True)
         self.refresh_playlist_view()
+        self._save_session_playlist_snapshot()
         logging.info(
             "Playlist remove: removed=%d now=%d current_index=%d",
             len(indices),
@@ -1692,12 +2406,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             + ";;"
             + tr("All files (*.*)")
         )
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            tr("Select files to open"),
-            "",
-            filter_str
-        )
+        dialog = QFileDialog(self, tr("Select files to open"), "")
+        dialog.setFileMode(QFileDialog.ExistingFiles)
+        dialog.setNameFilter(filter_str)
+        files = self._run_file_dialog(dialog)
         if files:
             self.append_to_playlist_async(
                 files,
@@ -1708,7 +2420,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             )
 
     def add_folder_dialog(self):
-        folder = QFileDialog.getExistingDirectory(self, tr("Select folder to open"))
+        dialog = QFileDialog(self, tr("Select folder to open"), "")
+        dialog.setFileMode(QFileDialog.Directory)
+        dialog.setOption(QFileDialog.ShowDirsOnly, True)
+        selected = self._run_file_dialog(dialog)
+        folder = selected[0] if selected else ""
         if folder:
             recursive = self._ask_recursive_import()
             self.append_to_playlist_async(
@@ -1724,7 +2440,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def open_url_dialog(self):
         logging.info("Open URL dialog launched")
         diag = URLInputDialog(self)
-        accepted = bool(diag.exec())
+        accepted = bool(self._exec_modal(diag))
         logging.info("Open URL dialog closed: accepted=%s", accepted)
         if accepted:
             url = diag.get_url()
@@ -1742,7 +2458,14 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 logging.warning("Open URL dialog accepted but URL was empty")
                 self.show_status_overlay(tr("No URL provided"))
 
-    def import_stream_sources_async(self, urls, play_new: bool = False, auth=None):
+    def import_stream_sources_async(
+        self,
+        urls,
+        play_new: bool = False,
+        auth=None,
+        title_map: dict | None = None,
+        duration_map: dict | None = None,
+    ):
         cleaned = [str(u).strip() for u in urls if str(u).strip()]
         logging.info("Queue stream import: raw=%d cleaned=%d", len(urls or []), len(cleaned))
         if not cleaned:
@@ -1750,7 +2473,15 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             return
         if auth is None:
             auth = load_stream_auth_settings()
-        self._url_queue.append({"urls": cleaned, "play_new": play_new, "auth": auth})
+        self._url_queue.append(
+            {
+                "urls": cleaned,
+                "play_new": play_new,
+                "auth": auth,
+                "title_map": dict(title_map or {}),
+                "duration_map": dict(duration_map or {}),
+            }
+        )
         self.show_status_overlay(tr("Resolving stream URLs..."))
         self._start_next_url_worker()
 
@@ -1814,24 +2545,54 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 host = parsed.netloc.split("@")[-1].lower()
                 self._stream_auth_by_host[host] = auth_value
 
-    def _on_url_worker_finished(self, resolved_urls, title_map, duration_map, error_msg):
+    def _on_url_worker_finished(self, resolved_urls, title_map, duration_map, error_msg, failures):
         req = self._active_url_request or {}
+        preset_title_map = dict(req.get("title_map", {}) if isinstance(req, dict) else {})
+        preset_duration_map = dict(req.get("duration_map", {}) if isinstance(req, dict) else {})
+        title_map = dict(title_map or {})
+        duration_map = dict(duration_map or {})
+        resolved_set = {str(u).casefold() for u in (resolved_urls or [])}
+        for key, value in preset_title_map.items():
+            s_key = str(key)
+            if s_key.casefold() in resolved_set and s_key not in title_map and str(value).strip():
+                title_map[s_key] = str(value).strip()
+        for key, value in preset_duration_map.items():
+            s_key = str(key)
+            if s_key.casefold() not in resolved_set or s_key in duration_map:
+                continue
+            try:
+                sec = float(value)
+                if sec >= 0:
+                    duration_map[s_key] = sec
+            except Exception:
+                continue
+        failure_items = list(failures or [])
+        failure_count = len(failure_items)
         logging.info(
-            "URL worker callback: requested=%d resolved=%d error=%s",
+            "URL worker callback: requested=%d resolved=%d failures=%d error=%s",
             len(req.get("urls", []) if isinstance(req, dict) else []),
             len(resolved_urls or []),
+            failure_count,
             error_msg or "",
         )
+        for item in failure_items:
+            src = str((item or {}).get("source") or "")
+            reason = str((item or {}).get("reason") or "")
+            if src and reason:
+                logging.warning("Stream import item failed: source=%s reason=%s", src, reason)
         self._active_url_worker = None
         self._active_url_request = None
         self._stop_url_resolve_status()
         if not resolved_urls:
             msg = str(error_msg or "").strip()
-            self.show_status_overlay(
-                tr("Stream import failed: {}").format(msg)
-                if msg
-                else tr("No stream URLs found")
-            )
+            if failure_count > 0:
+                self.show_status_overlay(tr("Imported 0, failed {}").format(failure_count))
+            else:
+                self.show_status_overlay(
+                    tr("Stream import failed: {}").format(msg)
+                    if msg
+                    else tr("No stream URLs found")
+                )
             self._start_next_url_worker()
             return
 
@@ -1851,14 +2612,20 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             play_new=play_new,
             title_map=title_map,
             duration_map=duration_map,
-            on_done=lambda new_items: self.show_status_overlay(
-                tr("Imported {} stream items").format(len(new_items))
+            on_done=lambda new_items, failed=failure_count, err=error_msg: self.show_status_overlay(
+                tr("Imported {}, failed {}").format(len(new_items), failed)
+                if failed > 0
+                else tr("Imported {} stream items").format(len(new_items))
             )
             if new_items
             else self.show_status_overlay(
-                tr("No new items imported")
-                if not error_msg
-                else tr("Stream import failed: {}").format(error_msg)
+                tr("Imported 0, failed {}").format(failed)
+                if failed > 0
+                else (
+                    tr("No new items imported")
+                    if not err
+                    else tr("Stream import failed: {}").format(err)
+                )
             ),
         )
         self._start_next_url_worker()
@@ -1886,6 +2653,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.current_index = match_idx
         self.rebuild_shuffle_order(keep_current=True)
         self.refresh_playlist_view()
+        self._save_session_playlist_snapshot()
         self.play_current()
 
     def append_to_playlist(self, paths, play_new: bool = False):
@@ -2001,22 +2769,21 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def _player_is_idle(self) -> bool:
         if self.current_index < 0 or not self.playlist:
             return True
-        try:
-            filename = self.player.filename
-            if filename:
-                return False
-            return (
-                self.player.time_pos is None
-                and self.player.duration is None
-                and bool(self._cached_paused)
-            )
-        except Exception:
+        # Use cached state only; avoid direct mpv property reads on hot paths.
+        if not self._cached_paused:
             return False
+        if self._last_duration > 0 or self._last_position > 0.5:
+            return False
+        return True
 
     def _can_switch_track_now(self, manual: bool = True) -> bool:
         if not manual:
             return True
         now = time.monotonic()
+        if self._is_engine_busy:
+            if (now - self._last_load_attempt_at) <= self._engine_busy_timeout_sec:
+                return False
+            self._is_engine_busy = False
         if now < self._next_track_switch_allowed_at:
             return False
         self._next_track_switch_allowed_at = now + self._track_switch_cooldown
@@ -2073,6 +2840,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.current_index,
             play_new,
         )
+        self._save_session_playlist_snapshot()
         return unique_paths
 
     def _duration_scan_batch_size(self, allow_while_playing: bool = False) -> int:
@@ -2203,8 +2971,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.show_status_overlay(tr("All local item durations are already known"))
             return
 
-        confirm = QMessageBox.question(
-            self,
+        confirm = self._show_message(
+            QMessageBox.Question,
             tr("Scan All Durations"),
             tr("Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.").format(len(targets)),
             QMessageBox.Yes | QMessageBox.No,
@@ -2343,6 +3111,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.current_index = -1
         self.rebuild_shuffle_order(keep_current=True)
         self.highlight_current_item()
+        self._save_session_playlist_snapshot()
 
     def show_sort_menu(self):
         from PySide6.QtWidgets import QMenu
@@ -2442,13 +3211,67 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self.refresh_playlist_view()
         self.highlight_current_item()
 
+    def _session_playlist_path(self) -> str:
+        return str(get_user_data_path("session_playlist.m3u"))
+
+    def _write_m3u_playlist(self, path: str):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#EXTM3U\n")
+            for item_path in self.playlist:
+                name = self.playlist_titles.get(item_path, "").strip()
+                if not name:
+                    if _is_stream_url(item_path):
+                        parsed = urlparse(item_path)
+                        name = Path(unquote(parsed.path or "")).name or item_path
+                    else:
+                        name = Path(item_path).name
+                raw_dur = self.playlist_raw_durations.get(item_path, -1)
+                dur_int = int(raw_dur) if raw_dur > 0 else -1
+                f.write(f"#EXTINF:{dur_int},{name}\n")
+                f.write(f"{item_path}\n")
+
+    def _save_session_playlist_snapshot(self):
+        path = self._session_playlist_path()
+        try:
+            if not self.playlist:
+                if os.path.exists(path):
+                    os.remove(path)
+                return
+            self._write_m3u_playlist(path)
+        except Exception as e:
+            logging.warning("Could not save session playlist: path=%s err=%s", path, e)
+
+    def restore_session_playlist(self):
+        path = self._session_playlist_path()
+        if not os.path.exists(path):
+            self.show_status_overlay(tr("No saved session playlist"))
+            return
+        try:
+            entries, title_map, duration_map = _parse_local_m3u_with_meta(path)
+            if entries:
+                self._import_playlist_entries(
+                    entries,
+                    replace_existing=True,
+                    title_map=title_map,
+                    duration_map=duration_map,
+                    resolve_stream_urls=False,
+                )
+                self.show_status_overlay(tr("Restored {} session items").format(len(entries)))
+            else:
+                self.show_status_overlay(tr("Saved session playlist is empty"))
+        except Exception as e:
+            logging.warning("Could not restore session playlist: path=%s err=%s", path, e)
+            self.show_status_overlay(tr("Could not restore session playlist"))
+
     def save_playlist_m3u(self):
         if not self.playlist:
             return
             
-        path, _ = QFileDialog.getSaveFileName(
-            self, tr("Save Playlist"), "", tr("M3U Playlist (*.m3u)")
-        )
+        dialog = QFileDialog(self, tr("Save Playlist"), "")
+        dialog.setAcceptMode(QFileDialog.AcceptSave)
+        dialog.setNameFilter(tr("M3U Playlist (*.m3u)"))
+        selected = self._run_file_dialog(dialog)
+        path = selected[0] if selected else ""
         if not path:
             return
             
@@ -2456,58 +3279,42 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             path += ".m3u"
             
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("#EXTM3U\n")
-                for item_path in self.playlist:
-                    name = Path(item_path).name
-                    # EXTM3U format: #EXTINF:duration,title
-                    # We can use -1 if duration is unknown
-                    raw_dur = self.playlist_raw_durations.get(item_path, -1)
-                    dur_int = int(raw_dur) if raw_dur > 0 else -1
-                    f.write(f"#EXTINF:{dur_int},{name}\n")
-                    f.write(f"{item_path}\n")
+            self._write_m3u_playlist(path)
             self.show_status_overlay(tr("Playlist Saved"))
         except Exception as e:
-            QMessageBox.critical(self, tr("Error"), tr("Could not save playlist: {}").format(e))
+            self._show_message(
+                QMessageBox.Critical,
+                tr("Error"),
+                tr("Could not save playlist: {}").format(e),
+            )
 
     def load_playlist_m3u(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, tr("Open Playlist"), "", tr("M3U Playlist (*.m3u);;All files (*.*)")
-        )
+        dialog = QFileDialog(self, tr("Open Playlist"), "")
+        dialog.setFileMode(QFileDialog.ExistingFile)
+        dialog.setNameFilter(tr("M3U Playlist (*.m3u);;All files (*.*)"))
+        selected = self._run_file_dialog(dialog)
+        path = selected[0] if selected else ""
         if not path:
             return
             
         try:
-            new_paths = []
-            with open(path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                for line in lines:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    # Assume it's a file path
-                    if os.path.exists(line):
-                        new_paths.append(line)
-                    else:
-                        # Try relative to playlist file
-                        rel_path = os.path.join(os.path.dirname(path), line)
-                        if os.path.exists(rel_path):
-                            new_paths.append(os.path.normpath(rel_path))
-
-            if new_paths:
-                # Replace or append? Usually load means replace or a new list. 
-                # Let's ask via dialog or just append. 
-                # Better to replace if we are "opening" a playlist.
-                self.playlist = new_paths
-                self.current_index = 0
-                self.rebuild_shuffle_order(keep_current=True)
-                self.refresh_playlist_view()
-                self.play_current()
-                self.show_status_overlay(tr("Loaded {} items").format(len(new_paths)))
+            entries, title_map, duration_map = _parse_local_m3u_with_meta(path)
+            if entries:
+                self._import_playlist_entries(
+                    entries,
+                    replace_existing=True,
+                    title_map=title_map,
+                    duration_map=duration_map,
+                )
+                self.show_status_overlay(tr("Loaded {} items").format(len(entries)))
             else:
                 self.show_status_overlay(tr("No valid files in playlist"))
         except Exception as e:
-            QMessageBox.critical(self, tr("Error"), tr("Could not load playlist: {}").format(e))
+            self._show_message(
+                QMessageBox.Critical,
+                tr("Error"),
+                tr("Could not load playlist: {}").format(e),
+            )
 
 
 
@@ -2618,9 +3425,33 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
     def force_ui_update(self):
         try:
+            now = time.monotonic()
+            if now < self._unsafe_mpv_read_allowed_at:
+                return
             if self._pending_resize_check:
-                if self.player.dwidth and self.player.dheight:
-                    self.sync_size()
+                now_resize = now
+                if (now_resize - self._last_track_switch_time) < 0.35:
+                    return
+                dims = None
+                try:
+                    dw = int(self.player.dwidth or 0)
+                    dh = int(self.player.dheight or 0)
+                    if dw > 0 and dh > 0:
+                        dims = (dw, dh)
+                except Exception:
+                    dims = None
+
+                if dims is not None:
+                    if dims != self._last_resize_dims:
+                        self._last_resize_dims = dims
+                        self._resize_stable_hits = 0
+                        self.sync_size(dimensions=dims)
+                    self._resize_stable_hits += 1
+                    # Keep a short stabilization window for late stream dimension updates.
+                    if self._resize_stable_hits >= 5 and now_resize >= (self._resize_sync_deadline - 0.8):
+                        self._pending_resize_check = False
+                elif now_resize >= self._resize_sync_deadline:
+                    # Give up after bounded retries to avoid perpetual polling on broken streams.
                     self._pending_resize_check = False
 
             if self._pending_show_background:
@@ -2632,7 +3463,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 self._advance_after_end()
                 return
 
-            now = time.monotonic()
             if now < self._suspend_ui_poll_until:
                 return
             if (
@@ -2649,6 +3479,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
             position = self.player.time_pos
             duration = self.player.duration
+            if self._is_engine_busy and (
+                (position is not None and math.isfinite(position))
+                or (duration is not None and math.isfinite(duration) and duration > 0)
+            ):
+                self._is_engine_busy = False
             if position is not None and math.isfinite(position):
                 if position > (self._last_position + 0.02):
                     self._last_progress_time = now
@@ -2732,6 +3567,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 
                 self.seek_slider.setRange(0, safe_duration)
                 self.seek_slider.setValue(safe_position)
+            self.seek_slider.set_current_time(float(position))
 
             current_str = format_duration(position)
             duration_str = format_duration(duration)
@@ -2760,9 +3596,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 QTimer.singleShot(delay_ms, _retry)
             return
         self._next_loadfile_allowed_at = now + self._loadfile_cooldown
+        self._next_track_switch_allowed_at = max(
+            self._next_track_switch_allowed_at,
+            now + self._manual_switch_settle_sec,
+        )
+        self._is_engine_busy = True
+        self._last_load_attempt_at = now
         self._play_retry_pending = False
         self._playback_load_token += 1
         load_token = self._playback_load_token
+        QTimer.singleShot(
+            int(self._engine_busy_settle_sec * 1000),
+            lambda t=load_token: self._release_engine_busy_if_current(t),
+        )
 
         current_file = self.playlist[self.current_index]
         try:
@@ -2782,13 +3628,20 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         self._pending_show_background = False
         self._last_track_switch_time = time.monotonic()
         self._pending_resize_check = True
+        self._resize_stable_hits = 0
+        self._last_resize_dims = None
+        self._resize_sync_deadline = time.monotonic() + (
+            6.0 if _is_stream_url(str(current_file)) else 3.0
+        )
         self._auto_next_deadline = 0.0
         self._user_paused = False
         self._last_position = 0.0
         self._last_duration = 0.0
         self._last_progress_time = 0.0
+        self._unsafe_mpv_read_allowed_at = time.monotonic() + 1.25
         self.player.speed = 1.0
-        self._suspend_ui_poll_until = time.monotonic() + 0.45
+        # Give mpv more settle time between rapid switches before property polling.
+        self._suspend_ui_poll_until = time.monotonic() + 0.95
         self._next_ui_poll_at = self._suspend_ui_poll_until
         # Prefer atomic loadfile option; fallback for python-mpv/mpv builds that reject this form.
         try:
@@ -2801,6 +3654,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         if not self.seek_slider.isSliderDown():
             self.seek_slider.setRange(0, 0)
             self.seek_slider.setValue(0)
+        self.seek_slider.set_current_time(0.0)
+        self.seek_slider.set_chapters([])
         self.time_label.setText("00:00 / 00:00")
         self.update_transport_icons()
         self.sync_shuffle_pos_to_current()
@@ -2814,7 +3669,15 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             try:
                 parsed = urlparse(str(current_file))
                 if parsed.scheme and parsed.netloc:
-                    display_name = unquote(Path(parsed.path.rstrip("/")).name) or parsed.netloc
+                    if _is_youtube_url(str(current_file)):
+                        direct_yt = _youtube_direct_video_url(str(current_file))
+                        if direct_yt:
+                            vid = parse_qs(urlparse(direct_yt).query).get("v", [""])[0]
+                            display_name = f"YouTube {vid}" if vid else "YouTube"
+                        else:
+                            display_name = "YouTube"
+                    else:
+                        display_name = unquote(Path(parsed.path.rstrip("/")).name) or parsed.netloc
                 else:
                     display_name = Path(str(current_file)).name
             except Exception:
@@ -2828,17 +3691,24 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         # Resume logic
         resume_pos = load_resume_position(current_file)
         if resume_pos > 5: # Only resume if more than 5 seconds in
-            # We need to wait a bit for file to load before seeking
-            # Or use a property observer. Let's try a singleShot.
             QTimer.singleShot(
-                120,
-                lambda t=load_token, p=str(current_file), pos=resume_pos: self._safe_resume_seek(t, p, pos),
+                240,
+                lambda t=load_token, p=str(current_file), pos=resume_pos: self._safe_resume_seek(t, p, pos, 0),
             )
+        # Chapter metadata can arrive late for some formats/streams.
+        QTimer.singleShot(1450, lambda t=load_token: self._refresh_chapter_markers(t))
+        QTimer.singleShot(2300, lambda t=load_token: self._refresh_chapter_markers(t))
+        QTimer.singleShot(3300, lambda t=load_token: self._refresh_chapter_markers(t))
 
         # Avoid frequent mpv property reads here; explicit sync_size calls remain available.
         self._size_poll.stop()
 
-    def _safe_resume_seek(self, load_token: int, expected_path: str, pos):
+    def _release_engine_busy_if_current(self, load_token: int):
+        if load_token != self._playback_load_token:
+            return
+        self._is_engine_busy = False
+
+    def _safe_resume_seek(self, load_token: int, expected_path: str, pos, attempt: int = 0):
         try:
             if load_token != self._playback_load_token:
                 return
@@ -2846,64 +3716,90 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 return
             if str(self.playlist[self.current_index]) != str(expected_path):
                 return
-            dur = self.player.duration
-            if dur and pos < (dur - 10): # Don't resume if very close to end
-                self.player.time_pos = pos
-                self.show_status_overlay(tr("Resumed from {}").format(format_duration(pos)))
+            self.player.command("seek", float(pos), "absolute", "keyframes")
+            self.show_status_overlay(tr("Resumed from {}").format(format_duration(pos)))
         except Exception:
-            pass
+            if attempt < 8:
+                QTimer.singleShot(
+                    220,
+                    lambda t=load_token, p=expected_path, s=pos, a=attempt + 1: self._safe_resume_seek(t, p, s, a),
+                )
 
     def _advance_after_end(self):
         return self.next_video(manual=False)
+
+    def _extract_chapter_times(self) -> list[dict]:
+        try:
+            chapters = self.player.chapter_list
+        except Exception:
+            return []
+        if not chapters:
+            return []
+        out = []
+        for chapter in chapters:
+            if not isinstance(chapter, dict):
+                continue
+            raw = chapter.get("time")
+            try:
+                sec = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if sec >= 0:
+                out.append({"time": sec, "title": str(chapter.get("title") or "")})
+        return out
+
+    def _refresh_chapter_markers(self, load_token: int):
+        if load_token != self._playback_load_token:
+            return
+        if time.monotonic() < self._unsafe_mpv_read_allowed_at:
+            return
+        if self.current_index < 0:
+            self.seek_slider.set_chapters([])
+            return
+        self.seek_slider.set_chapters(self._extract_chapter_times())
 
     def _try_sync_size(self):
         if self.isFullScreen():
             self._size_poll.stop()
             return
 
-        width, height = self.player.dwidth, self.player.dheight
-        if not width or not height:
+        dims = self._last_resize_dims
+        if not dims or dims[0] <= 0 or dims[1] <= 0:
             return
 
         self._size_poll.stop()
-        self.sync_size()
+        self.sync_size(dimensions=dims)
 
-    def sync_size(self):
+    def sync_size(self, dimensions: tuple[int, int] | None = None):
         if self.isFullScreen():
             self.player.video_zoom = self.window_zoom
             return
 
-        # Keep first-start/empty-player window at the configured minimum size.
-        if not (self.player.dwidth and self.player.dheight):
-            params = self.player.video_params or {}
-            if not params.get("w") or not params.get("h"):
-                self.resize(self.minimumWidth(), self.minimumHeight())
+        dims = dimensions or self._last_resize_dims
+        if not dims or dims[0] <= 0 or dims[1] <= 0:
+            # Keep first-start/empty-player window at the configured minimum size.
+            if self.current_index < 0:
+                empty_w, empty_h = self._empty_window_size
+                self.resize(
+                    max(self.minimumWidth(), int(empty_w)),
+                    max(self.minimumHeight(), int(empty_h)),
+                )
                 self.player.video_zoom = 0.0
-                return
+            return
 
-        # Use video_params for intrinsic dimensions (actual source file specs)
-        params = self.player.video_params
-        if not params or not params.get('w'):
-            # Fallback to display width/height if params not ready
-            w, h = self.player.dwidth, self.player.dheight
-            intrinsic_aspect = (w / h) if h else 1.77
-            # Use 720p as a base for fallback height
-            base_h = h if h else 720
-        else:
-            intrinsic_aspect = params.get('aspect') or (params.get('w') / params.get('h'))
-            base_h = params.get('h')
+        w, h = int(dims[0]), int(dims[1])
+        intrinsic_aspect = (w / h) if h else 1.77
+        base_h = h if h else 720
 
         # 1. Calculate effective aspect ratio
         effective_aspect = intrinsic_aspect
-        override = self.player.video_aspect_override
-        if override and override != -1:
+        override = self._aspect_ratio_setting
+        if override and override != "auto":
             if isinstance(override, str) and ":" in override:
                 try:
                     num, den = map(float, override.split(":"))
                     if den > 0: effective_aspect = num / den
                 except: pass
-            elif isinstance(override, (int, float)) and override > 0:
-                effective_aspect = float(override)
 
         # 2. Calculate zoom factor
         try:
@@ -3025,6 +3921,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.setWindowTitle("Cadre Player")
             if hasattr(self, "title_bar"):
                 self.title_bar.info_label.setText("")
+            self.seek_slider.set_current_time(0.0)
+            self.seek_slider.set_chapters([])
             self.sync_size()
         elif current_path and current_path in self.playlist:
             self.current_index = self.playlist.index(current_path)
@@ -3036,6 +3934,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         
         self.rebuild_shuffle_order(keep_current=True)
         self.refresh_playlist_view()
+        self._save_session_playlist_snapshot()
 
     def remove_playlist_index(self, index: int):
         self.remove_playlist_indices([index])
@@ -3046,14 +3945,26 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
     def stop_playback(self):
         self.save_current_resume_info()
+        # Cancel any delayed/scheduled switch from rapid navigation.
+        self._switch_request_id += 1
+        # Ensure stop never triggers a deferred auto-next transition.
+        self._pending_auto_next = False
+        self._auto_next_deadline = 0.0
+        self._is_engine_busy = False
         self.player.command("stop")
         self.background_widget.show()
         self.player.pause = True
         self._cached_paused = True
         self._user_paused = True
+        # Reset cached timeline so Play after Stop restarts current item.
+        self._last_position = 0.0
+        self._last_duration = 0.0
+        self._last_progress_time = 0.0
         self.time_label.setText("00:00 / 00:00")
         self.seek_slider.setValue(0)
         self.seek_slider.setRange(0, 0)
+        self.seek_slider.set_current_time(0.0)
+        self.seek_slider.set_chapters([])
         self.update_transport_icons()
         self.setWindowTitle("Cadre Player")
         if hasattr(self, "title_bar"):
@@ -3064,18 +3975,16 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def save_current_resume_info(self):
         if not self.playlist or self.current_index < 0:
             return
-        try:
-            pos = self.player.time_pos
-            dur = self.player.duration
-            path = self.playlist[self.current_index]
-            if pos is not None and dur is not None:
-                # If we are near the end, reset resume pos
-                if pos > (dur - 15):
-                    save_resume_position(path, 0)
-                else:
-                    save_resume_position(path, pos)
-        except Exception:
-            pass
+        # Use cached timeline values to avoid unstable mpv property reads during rapid switching.
+        path = self.playlist[self.current_index]
+        pos = float(self._last_position or 0.0)
+        dur = float(self._last_duration or 0.0)
+        if pos <= 0 or dur <= 0:
+            return
+        if pos > (dur - 15):
+            save_resume_position(path, 0)
+        else:
+            save_resume_position(path, pos)
 
     def delete_to_trash(self, indices=None):
         if not self.playlist:
@@ -3095,9 +4004,12 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         else:
             msg = tr("Recycle {} selected files?").format(len(paths))
 
-        reply = QMessageBox.question(
-            self, tr("Recycle Bin"), msg,
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        reply = self._show_message(
+            QMessageBox.Question,
+            tr("Recycle Bin"),
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
@@ -3114,7 +4026,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.show_status_overlay(tr("Deleted {} files").format(len(deleted_indices)))
         else:
             if len(paths) == 1:
-                QMessageBox.warning(self, "Error", "Could not delete file.")
+                self._show_message(
+                    QMessageBox.Warning,
+                    tr("Error"),
+                    tr("Could not delete file."),
+                )
 
     def delete_selected_file_to_trash(self):
         self.delete_to_trash()
@@ -3154,24 +4070,26 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self._exec_menu_on_top(menu, self.mapToGlobal(pos))
 
     def add_subtitle_file(self):
-        file, _ = QFileDialog.getOpenFileName(
-            self, tr("Add Subtitle"), "", tr("Subtitles (*.srt *.ass *.ssa *.sub *.vtt);;All files (*.*)")
-        )
+        dialog = QFileDialog(self, tr("Add Subtitle"), "")
+        dialog.setFileMode(QFileDialog.ExistingFile)
+        dialog.setNameFilter(tr("Subtitles (*.srt *.ass *.ssa *.sub *.vtt);;All files (*.*)"))
+        selected = self._run_file_dialog(dialog)
+        file = selected[0] if selected else ""
         if file:
             self.player.command("sub-add", file)
 
     def open_subtitle_settings(self):
         dialog = SubtitleSettingsDialog(self, self)
-        dialog.exec()
+        self._exec_modal(dialog)
 
     def open_video_settings(self):
         dialog = VideoSettingsDialog(self, self)
-        dialog.exec()
+        self._exec_modal(dialog)
 
     def open_equalizer_dialog(self):
         from .ui.dialogs import EqualizerDialog
         dialog = EqualizerDialog(self, self)
-        dialog.exec()
+        self._exec_modal(dialog)
 
     def apply_equalizer_settings(self):
         data = load_equalizer_settings()
@@ -3185,9 +4103,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                     f"equalizer=f={f}:width_type=o:w=1:g={g}"
                     for f, g in zip(freqs, gains)
                 )
-                self.player.command("set", "af", af_str)
+                self.player.af = af_str
             else:
-                self.player.command("set", "af", "")
+                self.player.af = ""
         except Exception as e:
             print("Apply EQ Error:", e)
 
@@ -3201,7 +4119,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
     def open_about_dialog(self):
         from .ui.dialogs import AboutDialog
         dialog = AboutDialog(self)
-        dialog.exec()
+        self._exec_modal(dialog)
 
     def apply_video_settings(self):
         config = load_video_settings()
@@ -3213,8 +4131,18 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
             self.window_zoom = float(config.get("zoom", 0.0))
             self.player.video_rotate = config.get("rotate", 0)
             renderer = config.get("renderer", "gpu")
+            hwdec = config.get("hwdec", "auto-safe")
+            gpu_api = config.get("gpu_api", "auto")
             try:
-                self.player.command("set", "vo", renderer)
+                self.player.vo = renderer
+            except Exception:
+                pass
+            try:
+                self.player.gpu_api = gpu_api
+            except Exception:
+                pass
+            try:
+                self.player.hwdec = hwdec
             except Exception:
                 pass
             self.sync_size()
@@ -3223,6 +4151,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
     def set_aspect_ratio(self, ratio_str):
         # ratio_str can be "auto", "16:9", "4:3", etc.
+        self._aspect_ratio_setting = str(ratio_str or "auto")
         try:
             if ratio_str == "auto":
                 # mpv internal: -1 resets the override
@@ -3246,6 +4175,17 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         
         # Re-showing is required when changing flags as it may recreate the window
         self.show()
+        self._sync_overlay_topmost_flags()
+        if self.pinned_controls or self.current_index < 0:
+            self.overlay.show()
+        if self.pinned_playlist:
+            self.playlist_overlay.show()
+        if self.current_index < 0 and not self.isFullScreen() and not self._context_menu_open:
+            self.title_bar.show()
+        self._sync_overlay_geometry()
+        self._sync_playlist_overlay_geometry()
+        self._sync_title_bar_geometry()
+        self._enforce_overlay_stack()
 
     def change_language(self, lang_code: str):
         save_language_setting(lang_code)
@@ -3254,10 +4194,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         from .i18n import setup_i18n
         setup_i18n(lang_code)
         
-        QMessageBox.information(
-            self, 
-            tr("Language Changed"), 
-            tr("Language has been changed to {}. Some changes will take effect after restart.").format(lang_code.upper())
+        self._show_message(
+            QMessageBox.Information,
+            tr("Language Changed"),
+            tr("Language has been changed to {}. Some changes will take effect after restart.").format(lang_code.upper()),
         )
         # Update what we can
         self.update_mode_buttons()
@@ -3388,16 +4328,22 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 name = event.name
             if isinstance(name, bytes):
                 name = name.decode(errors="ignore")
-
-            if name == "end-file":
-                self._pending_auto_next = True
-                self._cached_paused = True
-            elif name == "start-file":
-                self._pending_auto_next = False
-                self._pending_show_background = False
-                self._cached_paused = False
+            if not name:
+                return
+            self._mpv_event_signal.emit(str(name))
         except Exception:
             pass
+
+    def _process_mpv_event_on_main_thread(self, name: str):
+        if name == "end-file":
+            self._is_engine_busy = False
+            self._pending_auto_next = True
+            self._cached_paused = True
+        elif name == "start-file":
+            self._is_engine_busy = False
+            self._pending_auto_next = False
+            self._pending_show_background = False
+            self._cached_paused = False
 
     def seek_absolute(self, value: int):
         if self.current_index < 0:
@@ -3456,6 +4402,29 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         status = tr("Muted") if new_muted else tr("Unmuted")
         self.show_status_overlay(status)
 
+    def open_advanced_mpv_conf(self):
+        try:
+            ensure_mpv_power_user_layout()
+            ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._mpv_conf_path)))
+            if not ok:
+                self.show_status_overlay(tr("Could not open mpv.conf"))
+        except Exception:
+            self.show_status_overlay(tr("Could not open mpv.conf"))
+
+    def open_mpv_scripts_folder(self):
+        try:
+            ensure_mpv_power_user_layout()
+            ok = QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._mpv_scripts_dir)))
+            if not ok:
+                self.show_status_overlay(tr("Could not open scripts folder"))
+        except Exception:
+            self.show_status_overlay(tr("Could not open scripts folder"))
+
+    def toggle_mpv_stats_overlay(self):
+        try:
+            self.player.command("script-binding", "stats/display-stats-toggle")
+        except Exception:
+            self.show_status_overlay(tr("Stats overlay unavailable"))
 
     def toggle_fullscreen(self):
         if self._fullscreen_transition_active:
@@ -3505,12 +4474,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         base = Path(self.playlist[self.current_index]).stem
         timestamp = QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss")
         default_name = f"{base}_{timestamp}.png"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            tr("Save screenshot"),
-            str(Path.home() / "Pictures" / default_name),
-            tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)"),
-        )
+        dialog = QFileDialog(self, tr("Save screenshot"), str(Path.home() / "Pictures" / default_name))
+        dialog.setAcceptMode(QFileDialog.AcceptSave)
+        dialog.setNameFilter(tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)"))
+        selected = self._run_file_dialog(dialog)
+        path = selected[0] if selected else ""
         if not path:
             return
 
@@ -3546,8 +4514,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                 if not self.playlist_overlay.geometry().contains(event.position().toPoint()):
                     self.playlist_overlay.hide()
                     
-            # Existing logic for moving the window from the top bar
-            if event.position().y() <= 60:
+            # Allow click+hold window move from the video container area.
+            if self.video_container.geometry().contains(event.position().toPoint()) and not self.isFullScreen():
                 self.dragpos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()
                 return
@@ -3594,6 +4562,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
 
     def keyPressEvent(self, event):
         key = event.key()
+        mods = event.modifiers()
         if key == Qt.Key_Escape:
             if hasattr(self, "playlist_overlay") and self.playlist_overlay.isVisible() and not self.pinned_playlist:
                 self.playlist_overlay.hide()
@@ -3615,6 +4584,15 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
                     self.remove_selected_from_playlist()
                 return
             super().keyPressEvent(event)
+            return
+        if key == Qt.Key_O and (mods & Qt.ControlModifier) and (mods & Qt.ShiftModifier):
+            self.add_folder_dialog()
+            return
+        elif key == Qt.Key_O and (mods & Qt.ControlModifier):
+            self.add_files_dialog()
+            return
+        elif key == Qt.Key_L and (mods & Qt.ControlModifier):
+            self.open_url_dialog()
             return
         if key == Qt.Key_Right:
             self.seek_relative(5)
@@ -3715,6 +4693,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic):
         elif key == Qt.Key_K: # Subtitle Size increase
             self.player.sub_font_size = min(120, self.player.sub_font_size + 1)
             self.show_status_overlay(tr("Size: {}").format(self.player.sub_font_size))
+        elif key == Qt.Key_I and (event.modifiers() & Qt.ShiftModifier):
+            self.toggle_mpv_stats_overlay()
         elif key == Qt.Key_U: # Subtitle Position decrease
             self.player.sub_pos = max(0, self.player.sub_pos - 1)
             self.show_status_overlay(tr("Pos: {}").format(self.player.sub_pos))

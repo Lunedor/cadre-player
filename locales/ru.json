@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Сканирование длительностей завершено ({}/{})",
     "Duration scan cancelled ({}/{})": "Сканирование длительностей отменено ({}/{})",
     "All local item durations are already known": "Все длительности локальных элементов уже известны",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Сканировать длительность {} локальных элементов плейлиста сейчас?\nВоспроизведение будет приостановлено до завершения или отмены сканирования."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Сканировать длительность {} локальных элементов плейлиста сейчас?\nВоспроизведение будет приостановлено до завершения или отмены сканирования.",
+    "Imported 0, failed {}": "Импортировано 0, не удалось {}",
+    "Imported {}, failed {}": "Импортировано {}, не удалось {}",
+    "Restore last session playlist": "Восстановить последний плейлист сессии",
+    "No saved session playlist": "Нет сохраненного плейлиста сессии",
+    "Restored {} session items": "Восстановлено {} элементов сессии",
+    "Saved session playlist is empty": "Сохраненный плейлист сессии пуст",
+    "Could not restore session playlist": "Не удалось восстановить плейлист сессии",
+    "Open file(s)": "Открыть файл(ы)",
+    "Open folder": "Открыть папку",
+    "Open URL dialog": "Открыть диалог URL",
+    "Open Advanced Config (mpv.conf)": "Открыть расширенную конфигурацию (mpv.conf)",
+    "Open Scripts Folder": "Открыть папку скриптов",
+    "Could not open mpv.conf": "Не удалось открыть mpv.conf",
+    "Could not open scripts folder": "Не удалось открыть папку скриптов",
+    "Stats overlay unavailable": "Статистика поверхности недоступна"
 }

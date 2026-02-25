@@ -192,5 +192,20 @@
     "Duration scan complete ({}/{})": "Сканування тривалостей завершено ({}/{})",
     "Duration scan cancelled ({}/{})": "Сканування тривалостей скасовано ({}/{})",
     "All local item durations are already known": "Всі тривалості локальних елементів уже відомі",
-    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Сканувати тривалість {} локальних елементів плейлиста зараз?\nВідтворення буде призупинено до завершення або скасування сканування."
+    "Scan {} local playlist items for duration now?\nPlayback will stay paused until scan finishes or is cancelled.": "Сканувати тривалість {} локальних елементів плейлиста зараз?\nВідтворення буде призупинено до завершення або скасування сканування.",
+    "Imported 0, failed {}": "Импортировано 0, не удалось {}",
+    "Imported {}, failed {}": "Импортировано {}, не удалось {}",
+    "Restore last session playlist": "Відновити останній плейлист сесії",
+    "No saved session playlist": "Немає збереженого плейлиста сесії",
+    "Restored {} session items": "Відновлено {} елементів сесії",
+    "Saved session playlist is empty": "Збережений плейлист сесії порожній",
+    "Could not restore session playlist": "Не вдалося відновити плейлист сесії",
+    "Open file(s)": "Відкрити файл(и)",
+    "Open folder": "Відкрити папку",
+    "Open URL dialog": "Відкрити діалог URL",
+    "Open Advanced Config (mpv.conf)": "Відкрити розширену конфігурацію (mpv.conf)",
+    "Open Scripts Folder": "Відкрити папку скриптів",
+    "Could not open mpv.conf": "Не вдалося відкрити mpv.conf",
+    "Could not open scripts folder": "Не вдалося відкрити папку скриптів",
+    "Stats overlay unavailable": "Статистика поверхні недоступна"
 }

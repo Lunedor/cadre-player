@@ -203,6 +203,19 @@ class VideoSettingsDialog(QDialog):
                 break
         self.renderer_combo.currentIndexChanged.connect(self.update_video)
         engine_layout.addRow(tr("Renderer") + ":", self.renderer_combo)
+
+        self.gpu_api_combo = QComboBox()
+        self.gpu_api_combo.addItem(tr("Auto (Default)"), "auto")
+        self.gpu_api_combo.addItem("Vulkan", "vulkan")
+        self.gpu_api_combo.addItem("D3D11", "d3d11")
+        self.gpu_api_combo.addItem("OpenGL", "opengl")
+        current_gpu_api = config.get("gpu_api", "auto")
+        for i in range(self.gpu_api_combo.count()):
+            if self.gpu_api_combo.itemData(i) == current_gpu_api:
+                self.gpu_api_combo.setCurrentIndex(i)
+                break
+        self.gpu_api_combo.currentIndexChanged.connect(self.update_video)
+        engine_layout.addRow(tr("GPU API") + ":", self.gpu_api_combo)
         layout.addWidget(engine_group)
 
         # Image Adjust Group
@@ -313,6 +326,7 @@ class VideoSettingsDialog(QDialog):
         self.aspect_combo.setCurrentText("auto")
         self.hwdec_combo.setCurrentText("auto-safe")
         self.renderer_combo.setCurrentIndex(0)
+        self.gpu_api_combo.setCurrentIndex(0)
         self.update_video()
 
     def update_video(self):
@@ -331,6 +345,7 @@ class VideoSettingsDialog(QDialog):
             "rotate": rotate_idx * 90,
             "hwdec": self.hwdec_combo.currentText(),
             "renderer": self.renderer_combo.currentData(),
+            "gpu_api": self.gpu_api_combo.currentData(),
         }
         save_video_settings(config)
         save_aspect_ratio(aspect_val)

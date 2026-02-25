@@ -183,6 +183,15 @@ def create_main_context_menu(player, pos):
     
     menu.addSeparator()
 
+    # Standalone: Power-user mpv config access
+    mpv_conf_action = menu.addAction(tr("Open Advanced Config (mpv.conf)"))
+    mpv_conf_action.triggered.connect(player.open_advanced_mpv_conf)
+
+    scripts_action = menu.addAction(tr("Open Scripts Folder"))
+    scripts_action.triggered.connect(player.open_mpv_scripts_folder)
+
+    menu.addSeparator()
+
     # Standalone: About
     about_action = menu.addAction(tr("About"))
     about_action.triggered.connect(player.open_about_dialog)

@@ -28,15 +28,20 @@ It is focused on:
 ![Clean Playback](screenshots/clean-video-playing.png)  
 *Minimal mode: video-focused, auto-hiding UI*
 
-
 ## Features
 
 - Frameless UI with custom title overlay and transport controls
+- Move window by click+hold on the video area (not only the title bar)
 - Playlist panel with drag-drop reorder, search, sort, and multi-select actions
 - Import from file, folder, URL, remote m3u/m3u8, and WebDAV folder
 - YouTube URL/playlist extraction through `yt-dlp`
 - Playback speed controls, shuffle, repeat modes
+- Visual chapter markers on the seekbar (from libmpv chapter metadata)
 - Subtitle settings, video tuning, and 10-band equalizer
+- On-demand technical stats overlay via mpv `stats.lua` (`Shift+I`)
+- Power-user mpv integration: app-managed `mpv.conf` + `scripts/` (Lua/JS auto-loaded)
+- Session playlist snapshot with one-click restore from playlist controls
+- Stream import feedback with summary toast (`Imported X, failed Y`) and detailed log entries
 - Resume position per item
 - Playlist save/load
 - Runtime diagnostics logging (`logs.txt`)
@@ -82,51 +87,70 @@ python main.py
 
 ## Keyboard Shortcuts
 
-| Key          | Action                                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------- |
-| Space        | Play / Pause                                                                                               |
-| Left / Right | Seek backward / forward                                                                                    |
-| Up / Down    | Volume up / down                                                                                           |
-| PageUp       | Previous item                                                                                              |
-| PageDown     | Next item                                                                                                  |
-| Enter        | Toggle fullscreen or play selected item when playlist is focused                                           |
-| F            | Toggle fullscreen                                                                                          |
-| Esc          | Exit fullscreen or hide unpinned playlist                                                                  |
-| Delete       | Remove selected playlist item(s)                                                                           |
-| Shift+Delete | Move selected local file(s) to recycle bin / trash                                                         |
-| P            | Toggle playlist panel                                                                                      |
-| M            | Mute / Unmute                                                                                              |
-| S            | Screenshot SaveAsSave AsSaveAs                                                                             |
-| V            | Open video settings                                                                                        |
-| F4           | Toggle full-duration scan                                                                                  |
-| .            | Next frame frame−stepframe-stepframe−step                                                                  |
-| ,            | Previous frame frame−back−stepframe-back-stepframe−back−step                                               |
-| [            | Decrease playback speed (step)                                                                             |
-| ]            | Increase playback speed (step)                                                                             |
-| +            | Window zoom in                                                                                             |
-| -            | Window zoom out                                                                                            |
-| 0            | Reset window zoom and reset pan                                                                            |
-| 4            | Pan left only when video is zoomed                                                                         |
-| 6            | Pan right only when video is zoomed                                                                        |
-| 8            | Pan up only when video is zoomed                                                                           |
-| 2            | Pan down only when video is zoomed                                                                         |
-| R            | Rotate video +90°                                                                                          |
-| Ctrl+R       | Reset Rotation                                                                                             |
-| B            | Increase brightness                                                                                        |
-| Shift+B      | Decrease brightness                                                                                        |
-| G            | Subtitle delay −0.1s                                                                                       |
-| H            | Subtitle delay +0.1s                                                                                       |
-| J            | Subtitle size −1                                                                                           |
-| K            | Subtitle size +1                                                                                           |
-| U            | Subtitle position −1                                                                                       |
-| I            | Subtitle position +1                                                                                       |
+| Key | Action |
+| --- | --- |
+| Space | Play / Pause |
+| Left / Right | Seek backward / forward |
+| Up / Down | Volume up / down |
+| PageUp | Previous item |
+| PageDown | Next item |
+| Enter | Toggle fullscreen or play selected item when playlist is focused |
+| F | Toggle fullscreen |
+| Esc | Exit fullscreen or hide unpinned playlist |
+| Delete | Remove selected playlist item(s) |
+| Shift+Delete | Move selected local file(s) to recycle bin / trash |
+| Ctrl+O | Open file(s) |
+| Ctrl+Shift+O | Open folder |
+| Ctrl+L | Open URL dialog |
+| P | Toggle playlist panel |
+| M | Mute / Unmute |
+| S | Save screenshot |
+| V | Open video settings |
+| F4 | Toggle full-duration scan |
+| . | Next frame |
+| , | Previous frame |
+| [ | Decrease playback speed (step) |
+| ] | Increase playback speed (step) |
+| + | Window zoom in |
+| - | Window zoom out |
+| 0 | Reset window zoom and reset pan |
+| 4 | Pan left only when video is zoomed |
+| 6 | Pan right only when video is zoomed |
+| 8 | Pan up only when video is zoomed |
+| 2 | Pan down only when video is zoomed |
+| R | Rotate video +90° |
+| Ctrl+R | Reset rotation |
+| B | Increase brightness |
+| Shift+B | Decrease brightness |
+| G | Subtitle delay -0.1s |
+| H | Subtitle delay +0.1s |
+| J | Subtitle size -1 |
+| K | Subtitle size +1 |
+| U | Subtitle position -1 |
+| I | Subtitle position +1 |
+| Shift+I | Toggle mpv technical stats overlay (`stats/display-stats-toggle`) |
 
+## mpv Power-User Config
+
+Cadre Player creates and uses an app-managed mpv power-user layout:
+
+- `mpv.conf` for advanced raw libmpv options
+- `scripts/` folder for native mpv scripts (`.lua`, `.js`)
+- Main menu actions:
+  - `Open Advanced Config (mpv.conf)`
+  - `Open Scripts Folder`
+
+Paths:
+- Development mode: project root
+- Packaged/frozen mode on Windows: `%APPDATA%\CadrePlayer\`
 
 ## Logs and Data Files
 
 In development mode (running from source), files are kept in the project root:
 - `logs.txt`
 - `settings.ini`
+- `mpv.conf`
+- `scripts/`
 
 In packaged/frozen mode on Windows, files are stored in:
 - `%APPDATA%\CadrePlayer\`
