@@ -71,9 +71,13 @@ class PlaylistListModel(QAbstractListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._paths: list[str] = []
+        self._row_by_path: dict[str, int] = {}
         self._durations: dict[str, str] = {}
         self._titles: dict[str, str] = {}
         self._resolved_titles: dict[str, str] = {}
+
+    def _rebuild_row_index(self):
+        self._row_by_path = {path: row for row, path in enumerate(self._paths)}
 
     def rowCount(self, parent=QModelIndex()):
         if parent.isValid():
@@ -170,6 +174,7 @@ class PlaylistListModel(QAbstractListModel):
 
         self.beginResetModel()
         self._paths = reordered
+        self._rebuild_row_index()
         self.endResetModel()
         self.orderChanged.emit()
         return True
@@ -198,12 +203,14 @@ class PlaylistListModel(QAbstractListModel):
             destinationChild -= count
         for i, value in enumerate(moved):
             self._paths.insert(destinationChild + i, value)
+        self._rebuild_row_index()
         self.endMoveRows()
         return True
 
     def set_paths(self, paths: list[str], durations: dict[str, str], titles: dict[str, str] = None):
         self.beginResetModel()
         self._paths = list(paths)
+        self._rebuild_row_index()
         self._durations = dict(durations)
         self._titles = dict(titles or {})
         self._resolved_titles = {p: _playlist_item_name(p) for p in self._paths}
@@ -216,31 +223,32 @@ class PlaylistListModel(QAbstractListModel):
         end = start + len(paths) - 1
         self.beginInsertRows(QModelIndex(), start, end)
         self._paths.extend(paths)
-        self._durations = dict(durations)
+        for row, path in enumerate(paths, start=start):
+            self._row_by_path[path] = row
+        self._durations = durations
         if titles is not None:
-            self._titles = dict(titles)
+            self._titles = titles
         for p in paths:
             self._resolved_titles[p] = _playlist_item_name(p)
         self.endInsertRows()
 
     def update_duration(self, path: str, duration_text: str):
         self._durations[path] = duration_text
-        changed = False
-        for row, item_path in enumerate(self._paths):
-            if item_path == path:
-                idx = self.index(row, 0)
-                self.dataChanged.emit(idx, idx, [PLAYLIST_DURATION_ROLE])
-                changed = True
-        return changed
+        row = self._row_by_path.get(path)
+        if row is None:
+            return False
+        idx = self.index(row, 0)
+        self.dataChanged.emit(idx, idx, [PLAYLIST_DURATION_ROLE])
+        return True
 
     def update_title(self, path: str, title: str):
         self._titles[path] = title
         if path not in self._resolved_titles:
             self._resolved_titles[path] = _playlist_item_name(path)
-        for row, item_path in enumerate(self._paths):
-            if item_path == path:
-                idx = self.index(row, 0)
-                self.dataChanged.emit(idx, idx, [PLAYLIST_NAME_ROLE])
+        row = self._row_by_path.get(path)
+        if row is not None:
+            idx = self.index(row, 0)
+            self.dataChanged.emit(idx, idx, [PLAYLIST_NAME_ROLE])
 
     def paths(self):
         return list(self._paths)
@@ -286,18 +294,36 @@ class PlaylistItemDelegate(QStyledItemDelegate):
         current_row = view.property("current_playlist_index") if view else -1
         is_current = source_row == current_row
 
-        if is_selected:
-            bg = QColor(255, 255, 255, 36)
-            border = QColor(255, 255, 255, 58)
+        if is_selected and is_current:
+            bg = QColor(56, 134, 216, 120)
+            border = QColor(124, 195, 255, 220)
+            title_pen = QColor(255, 255, 255, 252)
+            index_pen = QColor(190, 228, 255, 245)
+            dur_pen = QColor(218, 238, 255, 235)
+        elif is_selected:
+            bg = QColor(255, 255, 255, 38)
+            border = QColor(255, 255, 255, 72)
+            title_pen = QColor(255, 255, 255, 248)
+            index_pen = QColor(226, 226, 226, 205)
+            dur_pen = QColor(224, 224, 224, 178)
         elif is_current:
-            bg = QColor(255, 255, 255, 24)
-            border = QColor(255, 255, 255, 46)
+            bg = QColor(44, 171, 132, 88)
+            border = QColor(123, 232, 198, 195)
+            title_pen = QColor(230, 255, 246, 248)
+            index_pen = QColor(169, 238, 214, 230)
+            dur_pen = QColor(190, 244, 226, 198)
         elif is_hovered:
             bg = QColor(255, 255, 255, 18)
             border = QColor(255, 255, 255, 20)
+            title_pen = QColor(255, 255, 255, 244)
+            index_pen = QColor(255, 255, 255, 132)
+            dur_pen = QColor(255, 255, 255, 160)
         else:
             bg = QColor(255, 255, 255, 10)
             border = QColor(255, 255, 255, 14)
+            title_pen = QColor(255, 255, 255, 238)
+            index_pen = QColor(255, 255, 255, 120)
+            dur_pen = QColor(255, 255, 255, 150)
 
         painter.setPen(border)
         painter.setBrush(bg)
@@ -316,19 +342,19 @@ class PlaylistItemDelegate(QStyledItemDelegate):
         f_index = QFont("Cascadia Code", 9)
         f_index.setBold(True)
         painter.setFont(f_index)
-        painter.setPen(QColor(255, 255, 255, 120))
+        painter.setPen(index_pen)
         painter.drawText(index_rect, Qt.AlignVCenter | Qt.AlignLeft, index_text)
 
         f_title = QFont("Segoe UI", 10)
         f_title.setWeight(QFont.DemiBold)
         painter.setFont(f_title)
-        painter.setPen(QColor(255, 255, 255, 244))
+        painter.setPen(title_pen)
         title_elided = painter.fontMetrics().elidedText(title, Qt.ElideRight, title_rect.width())
         painter.drawText(title_rect, Qt.AlignVCenter | Qt.AlignLeft, title_elided)
 
         f_dur = QFont("Segoe UI", 8)
         painter.setFont(f_dur)
-        painter.setPen(QColor(255, 255, 255, 150))
+        painter.setPen(dur_pen)
         painter.drawText(dur_rect, Qt.AlignVCenter | Qt.AlignLeft, duration)
         painter.restore()
 
@@ -612,6 +638,8 @@ class PlaylistWidget(QListView):
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setUniformItemSizes(True)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setAutoScroll(True)
+        self.setAutoScrollMargin(48)
         self.setMouseTracking(True)
 
 
@@ -625,6 +653,15 @@ class PlaylistWidget(QListView):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
+            # Help long-distance reordering by forcing viewport scroll near edges.
+            y = int(event.position().y())
+            margin = 48
+            step = 28
+            bar = self.verticalScrollBar()
+            if y <= margin:
+                bar.setValue(max(bar.minimum(), bar.value() - step))
+            elif y >= (self.viewport().height() - margin):
+                bar.setValue(min(bar.maximum(), bar.value() + step))
             super().dragMoveEvent(event)
 
     def dropEvent(self, event):

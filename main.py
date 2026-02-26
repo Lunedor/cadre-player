@@ -1,5 +1,7 @@
 import os
 import sys
+import threading
+import logging
 if os.name == "nt":
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -58,6 +60,7 @@ def run() -> int:
     setup_i18n()
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
 
     from ui.icons import get_app_icon
     app.setWindowIcon(get_app_icon())
@@ -101,9 +104,50 @@ def run() -> int:
 
     server.newConnection.connect(on_new_connection)
 
+    def _quit_watchdog() -> None:
+        killer = threading.Timer(3.0, lambda: os._exit(0))
+        killer.daemon = True
+        killer.start()
+
+    app.aboutToQuit.connect(_quit_watchdog)
+
     player.show()
     player.load_startup_paths(sys.argv[1:])
-    return app.exec()
+
+    exit_code = app.exec()
+
+    try:
+        server.close()
+        server.removeServer(SERVER_NAME)
+    except Exception as e:
+        logging.debug("Server cleanup skipped: %s", e)
+
+    lingering = [
+        t
+        for t in threading.enumerate()
+        if t is not threading.main_thread() and t.is_alive() and not t.daemon
+    ]
+    for t in lingering:
+        try:
+            t.join(timeout=0.25)
+        except Exception as e:
+            logging.debug("Thread join skipped for %s: %s", getattr(t, "name", "unknown"), e)
+    lingering = [
+        t
+        for t in threading.enumerate()
+        if t is not threading.main_thread() and t.is_alive() and not t.daemon
+    ]
+    if lingering:
+        try:
+            logging.warning(
+                "Forcing process exit due to lingering non-daemon threads: %s",
+                [getattr(t, "name", "unknown") for t in lingering],
+            )
+        except Exception as e:
+            logging.debug("Lingering-thread warning failed: %s", e)
+        os._exit(int(exit_code))
+
+    return int(exit_code)
 
 
 if __name__ == "__main__":

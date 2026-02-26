@@ -1,3 +1,5 @@
+import logging
+
 from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import Qt
 from ..ui.styles import MENU_STYLE
@@ -25,7 +27,11 @@ def create_main_context_menu(player, pos):
 
     # Standalone: Playback Speed
     speed_menu = menu.addMenu(tr("Playback Speed"))
-    current_speed = float(player.player.speed or 1.0)
+    try:
+        current_speed = float(player.player.speed or 1.0)
+    except Exception as e:
+        logging.debug("Could not read current playback speed for menu: %s", e)
+        current_speed = 1.0
     for speed in [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]:
         if speed == 1.0:
             label = tr("{}x (Normal)").format(speed)
@@ -35,7 +41,7 @@ def create_main_context_menu(player, pos):
         action.setCheckable(True)
         if abs(current_speed - speed) < 0.01:
             action.setChecked(True)
-        action.triggered.connect(lambda checked, s=speed: setattr(player.player, "speed", s))
+        action.triggered.connect(lambda checked, s=speed: player.set_playback_speed(s))
 
     # Audio Options
     audio_options_menu = menu.addMenu(tr("Audio Options"))
@@ -47,8 +53,8 @@ def create_main_context_menu(player, pos):
     tracks = []
     try:
         tracks = player.player.track_list
-    except:
-        pass
+    except Exception as e:
+        logging.debug("Could not read mpv track list for menu: %s", e)
     
     audio_tracks = [t for t in tracks if t['type'] == 'audio']
     audio_menu = audio_options_menu.addMenu(tr("Audio Tracks"))
@@ -60,7 +66,7 @@ def create_main_context_menu(player, pos):
             action = audio_menu.addAction(title)
             action.setCheckable(True)
             if t['selected']: action.setChecked(True)
-            action.triggered.connect(lambda checked, tid=t['id']: setattr(player.player, "aid", tid))
+            action.triggered.connect(lambda checked, tid=t['id']: player.select_audio_track(tid))
 
     eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
     eq_action.triggered.connect(player.open_equalizer_dialog)
@@ -106,14 +112,14 @@ def create_main_context_menu(player, pos):
         none_action.setCheckable(True)
         if not any(t['selected'] for t in sub_tracks):
             none_action.setChecked(True)
-        none_action.triggered.connect(lambda: setattr(player.player, "sid", "no"))
+        none_action.triggered.connect(lambda: player.select_subtitle_track("no"))
         
         for t in sub_tracks:
             title = t.get('title') or t.get('lang') or f"Track {t['id']}"
             action = sub_menu.addAction(title)
             action.setCheckable(True)
             if t['selected']: action.setChecked(True)
-            action.triggered.connect(lambda checked, tid=t['id']: setattr(player.player, "sid", tid))
+            action.triggered.connect(lambda checked, tid=t['id']: player.select_subtitle_track(tid))
 
     add_sub_action = subtitle_options_menu.addAction(tr("Add Subtitle File")+"...")
     add_sub_action.triggered.connect(player.add_subtitle_file)

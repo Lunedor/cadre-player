@@ -2,11 +2,144 @@ import os
 import sys
 import subprocess
 from pathlib import Path
+from urllib.parse import urlparse
 
-VIDEO_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov", ".webm")
-AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".alac", ".aiff")
+VIDEO_EXTENSIONS = (
+    ".3g2",
+    ".3gp",
+    ".amv",
+    ".asf",
+    ".avi",
+    ".drc",
+    ".dv",
+    ".f4v",
+    ".flv",
+    ".gifv",
+    ".m2t",
+    ".m2ts",
+    ".m2v",
+    ".m4v",
+    ".mjpeg",
+    ".mjpg",
+    ".mkv",
+    ".mov",
+    ".mp2v",
+    ".mp4",
+    ".mpe",
+    ".mpeg",
+    ".mpg",
+    ".mpv",
+    ".mts",
+    ".mxf",
+    ".nut",
+    ".ogm",
+    ".ogv",
+    ".qt",
+    ".rm",
+    ".rmvb",
+    ".roq",
+    ".swf",
+    ".ts",
+    ".vob",
+    ".webm",
+    ".wmv",
+    ".y4m",
+)
+AUDIO_EXTENSIONS = (
+    ".aac",
+    ".ac3",
+    ".aif",
+    ".aifc",
+    ".aiff",
+    ".alac",
+    ".amr",
+    ".ape",
+    ".au",
+    ".caf",
+    ".dts",
+    ".eac3",
+    ".flac",
+    ".m4a",
+    ".m4b",
+    ".mka",
+    ".mp2",
+    ".mp3",
+    ".oga",
+    ".ogg",
+    ".opus",
+    ".ra",
+    ".spx",
+    ".tta",
+    ".wav",
+    ".weba",
+    ".wma",
+    ".wv",
+)
+VIDEO_EXTENSION_SET = set(VIDEO_EXTENSIONS)
+AUDIO_EXTENSION_SET = set(AUDIO_EXTENSIONS)
+NON_MEDIA_EXTENSION_SET = {
+    ".ass", ".bmp", ".doc", ".docx", ".gif", ".ico", ".ini", ".jpeg", ".jpg",
+    ".json", ".log", ".lua", ".md", ".nfo", ".pdf", ".png", ".py", ".rtf",
+    ".srt", ".ssa", ".sub", ".svg", ".toml", ".txt", ".vtt", ".xml", ".yaml",
+    ".yml", ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".exe", ".dll",
+}
+_MEDIA_PROBE_CACHE: dict[str, bool] = {}
+
+
+def _probe_is_media_file(path: Path) -> bool:
+    cache_key = str(path.resolve())
+    cached = _MEDIA_PROBE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        flags = 0
+        if os.name == "nt":
+            flags = 0x08000000  # CREATE_NO_WINDOW
+        cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ]
+        completed = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            timeout=2,
+            check=False,
+            text=True,
+        )
+        stream_types = {line.strip().lower() for line in (completed.stdout or "").splitlines()}
+        is_media = bool({"audio", "video"} & stream_types)
+    except Exception:
+        is_media = False
+    _MEDIA_PROBE_CACHE[cache_key] = is_media
+    if len(_MEDIA_PROBE_CACHE) > 4096:
+        _MEDIA_PROBE_CACHE.clear()
+    return is_media
+
+
+def is_media_file(path: Path) -> bool:
+    ext = path.suffix.lower()
+    if ext in VIDEO_EXTENSION_SET or ext in AUDIO_EXTENSION_SET:
+        return True
+    if ext in NON_MEDIA_EXTENSION_SET:
+        return False
+    return _probe_is_media_file(path)
+
+
 def is_audio_file(path: Path) -> bool:
-    return path.suffix.lower() in AUDIO_EXTENSIONS
+    ext = path.suffix.lower()
+    if ext in AUDIO_EXTENSION_SET:
+        return True
+    if ext in VIDEO_EXTENSION_SET or ext in NON_MEDIA_EXTENSION_SET:
+        return False
+    return _probe_is_media_file(path)
 SPEED_STEPS = (0.5, 0.75, 1.0, 1.5, 2.0)
 REPEAT_OFF = 0
 REPEAT_ONE = 1
@@ -42,6 +175,11 @@ def get_user_data_dir() -> Path:
         return app_data
     return Path(__file__).parent
 
+
+def is_stream_url(value: str) -> bool:
+    parsed = urlparse(str(value or ""))
+    return bool(parsed.scheme and parsed.netloc)
+
 def format_duration(seconds: float) -> str:
     if seconds is None:
         return "--:--"
@@ -50,7 +188,8 @@ def format_duration(seconds: float) -> str:
     if not math.isfinite(seconds) or seconds < 0:
         return "--:--"
 
-    total_seconds = int(seconds)
+    # Round to nearest second to reduce one-second jitter between probe/runtime sources.
+    total_seconds = int(round(seconds))
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     secs = total_seconds % 60
@@ -59,7 +198,12 @@ def format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 def is_video_file(path: Path) -> bool:
-    return path.suffix.lower() in VIDEO_EXTENSIONS
+    ext = path.suffix.lower()
+    if ext in VIDEO_EXTENSION_SET:
+        return True
+    if ext in AUDIO_EXTENSION_SET or ext in NON_MEDIA_EXTENSION_SET:
+        return False
+    return _probe_is_media_file(path)
 
 def list_folder_media(folder: Path, recursive: bool = False) -> list[str]:
     if not folder.exists() or not folder.is_dir():
@@ -67,15 +211,19 @@ def list_folder_media(folder: Path, recursive: bool = False) -> list[str]:
     
     if recursive:
         all_media = []
-        for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS:
-            all_media.extend(folder.rglob(f"*{ext}"))
-            all_media.extend(folder.rglob(f"*{ext.upper()}"))
-        return [str(p.resolve()) for p in sorted(all_media, key=lambda p: str(p).lower())]
+        for root, dirs, filenames in os.walk(folder):
+            dirs.sort(key=lambda d: d.lower())
+            filenames.sort(key=lambda f: f.lower())
+            for filename in filenames:
+                full_path = Path(root) / filename
+                if is_media_file(full_path):
+                    all_media.append(str(full_path.resolve()))
+        return all_media
     else:
         return [
             str(item.resolve())
             for item in sorted(folder.iterdir(), key=lambda p: p.name.lower())
-            if item.is_file() and (is_video_file(item) or is_audio_file(item))
+            if item.is_file() and is_media_file(item)
         ]
 
 def collect_paths(
@@ -97,7 +245,7 @@ def collect_paths(
 
     for path in paths:
         resolved = path.resolve()
-        if resolved.is_file() and (is_video_file(resolved) or is_audio_file(resolved)):
+        if resolved.is_file() and is_media_file(resolved):
             files.append(str(resolved))
             pending_emit += 1
             maybe_emit()
@@ -108,13 +256,13 @@ def collect_paths(
                     filenames.sort(key=lambda f: f.lower())
                     for filename in filenames:
                         full_path = Path(root) / filename
-                        if is_video_file(full_path) or is_audio_file(full_path):
+                        if is_media_file(full_path):
                             files.append(str(full_path.resolve()))
                             pending_emit += 1
                             maybe_emit()
             else:
                 for item in sorted(resolved.iterdir(), key=lambda p: p.name.lower()):
-                    if item.is_file() and (is_video_file(item) or is_audio_file(item)):
+                    if item.is_file() and is_media_file(item):
                         files.append(str(item.resolve()))
                         pending_emit += 1
                         maybe_emit()

@@ -1,5 +1,6 @@
 import faulthandler
 import logging
+import os
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -49,6 +50,12 @@ def setup_app_logging() -> Path:
 
 def _enable_fault_handler(log_path: Path) -> None:
     global _FAULT_FILE
+    # On Windows, C++ exceptions from native libs can produce very noisy
+    # "Windows fatal exception" dumps without being actionable for end users.
+    # Keep this opt-in there to avoid log/terminal spam and shutdown stalls.
+    if os.name == "nt" and os.environ.get("CADRE_ENABLE_FAULTHANDLER", "") != "1":
+        _FAULT_FILE = None
+        return
     try:
         _FAULT_FILE = open(log_path, "a", encoding="utf-8")
         faulthandler.enable(_FAULT_FILE)
