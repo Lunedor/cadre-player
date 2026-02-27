@@ -54,12 +54,18 @@ def _probe_tool_version(binary_name: str) -> str:
     if not exe:
         return "not found"
     try:
+        run_kwargs = {}
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if flags:
+                run_kwargs["creationflags"] = flags
         proc = subprocess.run(
             [exe, "--version"],
             capture_output=True,
             text=True,
             timeout=3,
             check=False,
+            **run_kwargs,
         )
         raw = (proc.stdout or proc.stderr or "").splitlines()
         first_line = raw[0].strip() if raw else ""

@@ -634,12 +634,18 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             return self._ffmpeg_available
         self._ffmpeg_probe_done = True
         try:
+            run_kwargs = {}
+            if os.name == "nt":
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if flags:
+                    run_kwargs["creationflags"] = flags
             result = subprocess.run(
                 ["ffmpeg", "-version"],
                 check=False,
                 capture_output=True,
                 timeout=3,
                 text=True,
+                **run_kwargs,
             )
             self._ffmpeg_available = bool(result.returncode == 0)
         except Exception:
@@ -770,6 +776,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             output = self._seek_thumb_temp_dir / f"{token}.jpg"
             if not output.exists():
                 try:
+                    run_kwargs = {}
+                    if os.name == "nt":
+                        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                        if flags:
+                            run_kwargs["creationflags"] = flags
                     subprocess.run(
                         [
                             "ffmpeg",
@@ -787,6 +798,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                         check=False,
                         capture_output=True,
                         timeout=7,
+                        **run_kwargs,
                     )
                 except Exception:
                     pass
