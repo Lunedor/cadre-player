@@ -61,6 +61,9 @@ try:
 except ImportError:
     yt_dlp = None
 
+YTDLP_REMOTE_COMPONENTS = "ejs:github"
+YTDLP_FMT_PREFIX = "fmt:"
+
 
 def _is_youtube_url(url: str) -> bool:
     host = (urlparse(url).netloc or "").lower()
@@ -703,17 +706,17 @@ class UIEventsMixin:
         self._exec_modal(dialog)
 
     def open_url_dialog(self):
-        logging.info("Open URL dialog launched")
+        logging.debug("Open URL dialog launched")
         diag = URLInputDialog(self)
         accepted = bool(self._exec_modal(diag))
-        logging.info("Open URL dialog closed: accepted=%s", accepted)
+        logging.debug("Open URL dialog closed: accepted=%s", accepted)
         if accepted:
             url = diag.get_url()
-            logging.info("Open URL dialog value: url=%s", url or "")
+            logging.debug("Open URL dialog value: url=%s", url or "")
             if url:
                 auth = diag.get_auth()
                 is_idle = self._player_is_idle()
-                logging.info(
+                logging.debug(
                     "Open URL import requested: idle=%s auth_enabled=%s",
                     is_idle,
                     bool((auth or {}).get("enabled")),
@@ -1624,7 +1627,11 @@ class UIEventsMixin:
             "480": "bestvideo[height<=480]+bestaudio/best[height<=480]",
             "360": "bestvideo[height<=360]+bestaudio/best[height<=360]",
         }
-        fmt = mapping.get(self.stream_quality, mapping["best"])
+        raw_quality = str(self.stream_quality or "best")
+        if raw_quality.startswith(YTDLP_FMT_PREFIX):
+            fmt = raw_quality[len(YTDLP_FMT_PREFIX) :].strip() or mapping["best"]
+        else:
+            fmt = mapping.get(raw_quality, mapping["best"])
         try:
             self.player.ytdl_format = fmt
         except Exception:
@@ -1640,27 +1647,52 @@ class UIEventsMixin:
             return tr("Auto (Best)")
         if value.isdigit():
             return f"{value}p"
+        if value.startswith(YTDLP_FMT_PREFIX):
+            return tr("Custom Format")
         return value
 
     def _is_stream_quality_resolvable_url(self, url: str) -> bool:
         return is_stream_url(url) and _is_youtube_url(url)
 
-    def _dedupe_quality_values(self, options: list[str]) -> list[str]:
-        dedup = []
+    def _dedupe_quality_values(self, options: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        dedup: list[tuple[str, str]] = []
         seen = set()
-        for value in options:
+        for value, label in options:
             if value not in seen:
                 seen.add(value)
-                dedup.append(value)
+                dedup.append((value, label))
         return dedup
 
-    def _cache_stream_quality_values(self, key: str, values: list[str]) -> None:
+    def _cache_stream_quality_values(self, key: str, values: list[tuple[str, str]]) -> None:
         self._stream_quality_cache[key] = list(values)
         while len(self._stream_quality_cache) > self._stream_quality_cache_limit:
             self._stream_quality_cache.pop(next(iter(self._stream_quality_cache)), None)
 
-    def _extract_youtube_quality_options(self, url: str) -> list[str]:
-        options = ["best"]
+    def _normalize_video_codec_label(self, codec: str) -> tuple[str, str]:
+        raw = str(codec or "").strip().lower()
+        if not raw or raw == "none":
+            return "", ""
+        token = raw.split(".", 1)[0]
+        if raw.startswith("av01") or token == "av01":
+            return "AV1", "av01"
+        if raw.startswith("vp9") or token == "vp9":
+            return "VP9", "vp9"
+        if raw.startswith("avc1") or raw.startswith("avc3") or token in {"avc1", "avc3"}:
+            return "H.264", "avc"
+        if raw.startswith("hvc1") or raw.startswith("hev1") or token in {"hvc1", "hev1"}:
+            return "HEVC", token
+        return token.upper(), token
+
+    def _build_codec_format_selector(self, height: int, codec_token: str) -> str:
+        return (
+            f"bestvideo[vcodec*={codec_token}][height<={int(height)}]+"
+            f"bestaudio/"
+            f"bestvideo[height<={int(height)}]+bestaudio/"
+            f"best[height<={int(height)}]"
+        )
+
+    def _extract_youtube_quality_options(self, url: str) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = [("best", tr("Auto (Best)"))]
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -1668,34 +1700,43 @@ class UIEventsMixin:
             "noplaylist": True,
             "extract_flat": False,
             "ignoreerrors": True,
+            "remote_components": YTDLP_REMOTE_COMPONENTS,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         formats = info.get("formats", []) if isinstance(info, dict) else []
-        heights = set()
+        codec_variants: set[tuple[int, str, str]] = set()
         for item in formats:
             if not isinstance(item, dict):
                 continue
-            if item.get("vcodec") in (None, "none"):
+            vcodec = str(item.get("vcodec") or "").strip()
+            if vcodec in {"", "none"}:
                 continue
             height = item.get("height")
             if isinstance(height, int) and height > 0:
-                heights.add(height)
-        for height in sorted(heights, reverse=True):
-            options.append(str(height))
+                codec_label, codec_token = self._normalize_video_codec_label(vcodec)
+                if codec_label and codec_token:
+                    codec_variants.add((height, codec_label, codec_token))
+        codec_order = {"H.264": 0, "VP9": 1, "AV1": 2, "HEVC": 3}
+        for height, codec_label, codec_token in sorted(
+            codec_variants,
+            key=lambda x: (-x[0], codec_order.get(x[1], 9), x[1]),
+        ):
+            selector = self._build_codec_format_selector(height, codec_token)
+            options.append((f"{YTDLP_FMT_PREFIX}{selector}", f"{height}p ({codec_label})"))
         return options
 
-    def _resolve_quality_options_for_url(self, url: str) -> list[str]:
+    def _resolve_quality_options_for_url(self, url: str) -> list[tuple[str, str]]:
         if not self._is_stream_quality_resolvable_url(url):
             return []
         if yt_dlp is None:
-            return ["best"]
+            return [("best", tr("Auto (Best)"))]
 
         key = url.casefold()
         if key in self._stream_quality_cache:
             return list(self._stream_quality_cache[key])
 
-        options = ["best"]
+        options: list[tuple[str, str]] = [("best", tr("Auto (Best)"))]
         try:
             options = self._extract_youtube_quality_options(url)
         except Exception:
@@ -1713,9 +1754,19 @@ class UIEventsMixin:
         if not values:
             return []
         options = []
-        for value in values:
-            options.append((value, self._quality_label(value), value == self.stream_quality))
+        for value, label in values:
+            options.append((value, label or self._quality_label(value), value == self.stream_quality))
         return options
+
+    def _current_quality_display_label(self, selected_value: str) -> str:
+        value = str(selected_value or "best")
+        if not (0 <= self.current_index < len(self.playlist)):
+            return self._quality_label(value)
+        current_item = str(self.playlist[self.current_index])
+        for opt_value, opt_label in self._resolve_quality_options_for_url(current_item):
+            if opt_value == value:
+                return opt_label or self._quality_label(value)
+        return self._quality_label(value)
 
     def _reload_current_stream_for_quality_change(self) -> bool:
         if not (0 <= self.current_index < len(self.playlist)):
@@ -1757,7 +1808,7 @@ class UIEventsMixin:
         self.stream_quality = str(quality or "best")
         save_stream_quality(self.stream_quality)
         self.apply_stream_quality_setting()
-        shown = self._quality_label(self.stream_quality)
+        shown = self._current_quality_display_label(self.stream_quality)
         reloaded = self._reload_current_stream_for_quality_change()
         if reloaded:
             self.show_status_overlay(tr("Quality: {} (reloaded)").format(shown))

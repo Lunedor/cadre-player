@@ -57,6 +57,7 @@ It is focused on:
   - `python-mpv`
   - `Send2Trash`
   - `yt-dlp`
+- For reliable modern YouTube extraction, install `Deno` (2.0+ recommended) and ensure `deno` is available on PATH.
 
 Windows is the primary tested platform.
 
@@ -144,6 +145,11 @@ Cadre Player creates and uses an app-managed mpv power-user layout:
   - `Open Advanced Config (mpv.conf)`
   - `Open Scripts Folder`
 
+Precedence and sync behavior (startup):
+- For shared video keys, `mpv.conf` is the source of truth.
+- Detected values are synced into `settings.ini` so GUI controls show applied values.
+- Shared keys currently synced: `vo`, `gpu-api`, `hwdec`, `brightness`, `contrast`, `saturation`, `gamma`, `video-zoom`, `video-rotate`.
+
 Paths:
 - Development mode: project root
 - Packaged/frozen mode on Windows: `%APPDATA%\CadrePlayer\`
@@ -163,6 +169,7 @@ In packaged/frozen mode on Windows, files are stored in:
 
 - YouTube links fail to import:
   - update `yt-dlp`
+  - ensure `deno` is installed and available on PATH
   - ensure internet access works
   - check `logs.txt` for lines containing `YouTube extract` and `URL resolve`
 - URL dialog closes without importing:
@@ -188,4 +195,3 @@ In packaged/frozen mode on Windows, files are stored in:
 ## License
 
 MIT License. See [LICENSE](LICENSE).
-

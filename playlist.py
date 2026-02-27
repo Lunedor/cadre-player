@@ -3,6 +3,7 @@ import subprocess
 import logging
 import time
 import base64
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
@@ -36,6 +37,20 @@ try:
     import yt_dlp
 except Exception:
     yt_dlp = None
+
+YTDLP_REMOTE_COMPONENTS = "ejs:github"
+
+
+def _build_ytdlp_opts(extra: Optional[dict] = None) -> dict:
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "remote_components": YTDLP_REMOTE_COMPONENTS,
+    }
+    if extra:
+        opts.update(extra)
+    return opts
 
 
 def normalize_playlist_entry(value) -> tuple[str, str]:
@@ -207,19 +222,40 @@ def _fallback_stream_title(url: str) -> str:
     return raw
 
 
-def _extract_youtube_single_metadata(url: str) -> tuple[str, float | None]:
+def _short_youtube_error_message(err: str) -> str:
+    text = str(err or "").strip()
+    if not text:
+        return "could not access YouTube video"
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    text = re.sub(r"^ERROR:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\[[^\]]+\]\s*", "", text).strip()
+    lower = text.casefold()
+    if "members" in lower and "only" in lower:
+        return "members-only YouTube video"
+    if "private video" in lower:
+        return "private YouTube video"
+    if "video unavailable" in lower:
+        return "YouTube video unavailable"
+    if "sign in to confirm your age" in lower or "age-restricted" in lower:
+        return "age-restricted YouTube video"
+    if "not available in your country" in lower or "geo" in lower:
+        return "geo-restricted YouTube video"
+    return text[:140]
+
+
+def _extract_youtube_single_metadata(url: str) -> tuple[str, float | None, str]:
     if yt_dlp is None:
-        return "", None
+        return "", None, "yt-dlp not installed"
     title = ""
     duration = None
+    error = ""
     try:
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "extract_flat": False,
-        }
+        opts = _build_ytdlp_opts(
+            {
+                "noplaylist": True,
+                "extract_flat": False,
+            }
+        )
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
         if isinstance(info, dict):
@@ -232,7 +268,8 @@ def _extract_youtube_single_metadata(url: str) -> tuple[str, float | None]:
                 duration = None
     except Exception as e:
         logging.info("YouTube single metadata fetch failed: url=%s err=%s", url, e)
-    return title, duration
+        error = _short_youtube_error_message(e)
+    return title, duration, error
 
 
 def _youtube_looks_like_playlist_url(url: str) -> bool:
@@ -457,14 +494,13 @@ def _extract_youtube_entries(url: str) -> tuple[list[dict], str]:
         results.append(entry)
 
     try:
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": "in_playlist",
-            "skip_download": True,
-            "noplaylist": False,
-            "playlistend": 10000,
-        }
+        opts = _build_ytdlp_opts(
+            {
+                "extract_flat": "in_playlist",
+                "noplaylist": False,
+                "playlistend": 10000,
+            }
+        )
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
@@ -486,14 +522,13 @@ def _extract_youtube_entries(url: str) -> tuple[list[dict], str]:
             return (results, "")
 
     try:
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "extract_flat": False,
-            "skip_download": True,
-            "noplaylist": False,
-            "playlistend": 10000,
-        }
+        opts = _build_ytdlp_opts(
+            {
+                "extract_flat": False,
+                "noplaylist": False,
+                "playlistend": 10000,
+            }
+        )
         with yt_dlp.YoutubeDL(opts) as ydl:
             info2 = ydl.extract_info(url, download=False)
         entries2 = info2.get("entries") if isinstance(info2, dict) else None
@@ -563,29 +598,39 @@ class URLResolveWorker(QThread):
         try:
             for raw in self.raw_urls:
                 if self.isInterruptionRequested():
-                    logging.info("URL resolve worker interrupted")
+                    logging.debug("URL resolve worker interrupted")
                     break
                 url = str(raw).strip()
                 if not url:
                     continue
                 source_kind = "direct"
                 source_error = ""
-                logging.info("Resolving URL: kind=unknown raw=%s", url)
+                logging.debug("Resolving URL: kind=unknown raw=%s", url)
 
                 try:
                     if _is_youtube_url(url):
                         source_kind = "youtube"
                         direct_video = _youtube_direct_video_url(url)
                         if direct_video and not _youtube_looks_like_playlist_url(url):
-                            resolved = [direct_video]
-                            yt_title, yt_duration = _extract_youtube_single_metadata(direct_video)
-                            if yt_title and not _is_placeholder_title(yt_title):
-                                title_map[direct_video] = yt_title
-                            if yt_duration is not None and yt_duration >= 0:
-                                duration_map[direct_video] = float(yt_duration)
-                            logging.info("Resolving URL as direct YouTube video: %s", url)
+                            yt_title, yt_duration, yt_single_error = _extract_youtube_single_metadata(direct_video)
+                            if yt_single_error:
+                                resolved = []
+                                source_error = yt_single_error
+                                _set_error(source_error)
+                                logging.warning(
+                                    "YouTube direct video rejected: url=%s reason=%s",
+                                    url,
+                                    yt_single_error,
+                                )
+                            else:
+                                resolved = [direct_video]
+                                if yt_title and not _is_placeholder_title(yt_title):
+                                    title_map[direct_video] = yt_title
+                                if yt_duration is not None and yt_duration >= 0:
+                                    duration_map[direct_video] = float(yt_duration)
+                            logging.debug("Resolving URL as direct YouTube video: %s", url)
                         else:
-                            logging.info("Resolving URL as YouTube extract: %s", url)
+                            logging.debug("Resolving URL as YouTube extract: %s", url)
                             entries, yt_error = _extract_youtube_entries(url)
                             _set_error(yt_error)
                             resolved = []
@@ -612,18 +657,18 @@ class URLResolveWorker(QThread):
                             )
                     elif _looks_like_m3u_url(url):
                         source_kind = "m3u"
-                        logging.info("Resolving URL as remote playlist: %s", url)
+                        logging.debug("Resolving URL as remote playlist: %s", url)
                         resolved = _fetch_remote_m3u(url, auth=self.auth)
                         if not resolved:
                             raise ValueError("no entries found in remote playlist")
                     elif _looks_like_directory_stream_url(url):
                         source_kind = "webdav"
-                        logging.info("Resolving URL as WebDAV folder: %s", url)
+                        logging.debug("Resolving URL as WebDAV folder: %s", url)
                         resolved = _fetch_webdav_files_recursive(url, auth=self.auth)
                         if not resolved:
                             raise ValueError("no media files found in webdav folder")
                     else:
-                        logging.info("Resolving URL as direct stream: %s", url)
+                        logging.debug("Resolving URL as direct stream: %s", url)
                         resolved = [_sanitize_http_url(url)]
                 except HTTPError as e:
                     logging.warning("URL resolve HTTP error: kind=%s url=%s code=%s", source_kind, url, e.code)
@@ -1026,7 +1071,12 @@ class PlaylistViewMixin:
         self._save_session_playlist_snapshot()
         self.play_current()
 
-    def append_to_playlist(self, paths, play_new: bool = False):
+    def append_to_playlist(
+        self,
+        paths,
+        play_new: bool = False,
+        autoplay_if_empty: bool = True,
+    ):
         if not paths:
             return []
 
@@ -1039,7 +1089,11 @@ class PlaylistViewMixin:
                 unique_paths.append(p_str)
                 seen.add(key)
 
-        return self._apply_prepared_playlist_paths(unique_paths, play_new=play_new)
+        return self._apply_prepared_playlist_paths(
+            unique_paths,
+            play_new=play_new,
+            autoplay_if_empty=autoplay_if_empty,
+        )
 
     def append_to_playlist_async(
         self,
@@ -1178,7 +1232,12 @@ class PlaylistViewMixin:
         else:
             QTimer.singleShot(int(delay_ms), _run)
 
-    def _apply_prepared_playlist_paths(self, unique_paths, play_new: bool = False):
+    def _apply_prepared_playlist_paths(
+        self,
+        unique_paths,
+        play_new: bool = False,
+        autoplay_if_empty: bool = True,
+    ):
         if not unique_paths:
             return []
 
@@ -1197,7 +1256,7 @@ class PlaylistViewMixin:
         if play_new and self.playlist:
             self.current_index = start_count
             self.play_current()
-        elif start_count == 0 and self._player_is_idle() and self.playlist:
+        elif autoplay_if_empty and start_count == 0 and self._player_is_idle() and self.playlist:
             if self.current_index < 0:
                 self.current_index = 0
             self.play_current()
@@ -1354,7 +1413,13 @@ class PlaylistViewMixin:
         if not resolved_urls:
             msg = str(error_msg or "").strip()
             if failure_count > 0:
-                self.show_status_overlay(tr("Imported 0, failed {}").format(failure_count))
+                first_reason = ""
+                if failure_count == 1:
+                    first_reason = str((failure_items[0] or {}).get("reason") or "").strip()
+                if first_reason:
+                    self.show_status_overlay(tr("Stream import failed: {}").format(first_reason))
+                else:
+                    self.show_status_overlay(tr("Imported 0, failed {}").format(failure_count))
             else:
                 self.show_status_overlay(
                     tr("Stream import failed: {}").format(msg)
@@ -2036,7 +2101,8 @@ class PlaylistViewMixin:
             if entries:
                 self._clear_playlist_before_import()
                 self._apply_resolved_metadata(title_map=title_map, duration_map=duration_map)
-                self.append_to_playlist(entries, play_new=False)
+                # Avoid initial auto-play race: restore target index first, then play once.
+                self.append_to_playlist(entries, play_new=False, autoplay_if_empty=False)
                 if target_path and target_path in self.playlist:
                     self.current_index = self.playlist.index(target_path)
                 elif 0 <= target_index < len(self.playlist):

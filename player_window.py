@@ -34,6 +34,7 @@ from .settings import (
     load_shuffle,
     load_volume,
     load_video_settings,
+    save_video_settings,
     load_aspect_ratio,
     load_resume_position,
     load_pinned_settings,
@@ -89,7 +90,7 @@ from .playlist import (
     _youtube_direct_video_url,
 )
 from .logic import PlayerLogic
-from .mpv_power_config import ensure_mpv_power_user_layout
+from .mpv_power_config import ensure_mpv_power_user_layout, load_mpv_video_overrides
 
 
 
@@ -281,6 +282,16 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._mpv_config_dir = self._power_user_paths["config_dir"]
         self._mpv_conf_path = self._power_user_paths["mpv_conf_path"]
         self._mpv_scripts_dir = self._power_user_paths["scripts_dir"]
+        mpv_conf_overrides = load_mpv_video_overrides(self._mpv_conf_path)
+        if mpv_conf_overrides:
+            v_config.update(mpv_conf_overrides)
+            save_video_settings(v_config)
+            self.window_zoom = float(v_config.get("zoom", 0.0))
+            self._video_rotate_deg = int(v_config.get("rotate", 0) or 0) % 360
+            self._video_mirror_horizontal = bool(v_config.get("mirror_horizontal", False))
+            self._video_mirror_vertical = bool(v_config.get("mirror_vertical", False))
+            self._seek_thumbnail_preview = bool(v_config.get("seek_thumbnail_preview", False))
+            logging.info("Applied video overrides from mpv.conf: %s", sorted(mpv_conf_overrides.keys()))
         logging.info(
             "MPV power-user config: dir=%s mpv_conf=%s scripts=%s",
             self._mpv_config_dir,
@@ -1115,6 +1126,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
     def _apply_seek_profile_for_source(self, current_file) -> None:
         source = str(current_file or "")
         stream_source = _is_stream_url(source)
+        is_youtube = _is_youtube_url(source)
+        yt_remote_components = (
+            "remote-components=ejs:github" if is_youtube else ""
+        )
         if stream_source:
             profile = {
                 "cache": "yes",
@@ -1122,8 +1137,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 "demuxer_max_back_bytes": "200M",
                 "force_seekable": "yes",
                 "hr_seek": "no",
-                # Clear any config-level extractor override that can cap YouTube quality.
-                "ytdl_raw_options": "",
+                # Keep stream profile fast while enforcing EJS remote components for YouTube.
+                "ytdl_raw_options": yt_remote_components,
             }
         else:
             profile = {
@@ -1136,6 +1151,14 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             }
         for prop, value in profile.items():
             self._set_mpv_property_safe(prop, value, allow_during_busy=True)
+        if stream_source and is_youtube:
+            logging.info(
+                "YouTube seek profile applied: quality=%s ytdl_raw_options=%s cache=%s demuxer_max_bytes=%s",
+                str(getattr(self, "stream_quality", "unknown")),
+                profile.get("ytdl_raw_options", ""),
+                profile.get("cache", ""),
+                profile.get("demuxer_max_bytes", ""),
+            )
 
     def _prepare_playback_switch_state(self, current_file) -> None:
         self._pending_auto_next = False
