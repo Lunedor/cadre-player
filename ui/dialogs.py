@@ -291,6 +291,21 @@ class VideoSettingsDialog(QDialog):
         self.rotate_combo.currentIndexChanged.connect(self.update_video)
         geo_layout.addRow(tr("Rotation") + ":", self.rotate_combo)
 
+        self.mirror_h_check = QCheckBox(tr("Mirror Horizontal"))
+        self.mirror_h_check.setChecked(bool(config.get("mirror_horizontal", False)))
+        self.mirror_h_check.toggled.connect(self.update_video)
+        geo_layout.addRow(self.mirror_h_check)
+
+        self.mirror_v_check = QCheckBox(tr("Mirror Vertical"))
+        self.mirror_v_check.setChecked(bool(config.get("mirror_vertical", False)))
+        self.mirror_v_check.toggled.connect(self.update_video)
+        geo_layout.addRow(self.mirror_v_check)
+
+        self.seek_thumb_check = QCheckBox(tr("Seek Thumbnail Preview"))
+        self.seek_thumb_check.setChecked(bool(config.get("seek_thumbnail_preview", False)))
+        self.seek_thumb_check.toggled.connect(self.update_video)
+        geo_layout.addRow(self.seek_thumb_check)
+
         layout.addWidget(geo_group)
 
         # Footer Buttons
@@ -323,6 +338,9 @@ class VideoSettingsDialog(QDialog):
         self.gamma_slider.setValue(0)
         self.zoom_label.setText("0.0")
         self.rotate_combo.setCurrentIndex(0)
+        self.mirror_h_check.setChecked(False)
+        self.mirror_v_check.setChecked(False)
+        self.seek_thumb_check.setChecked(False)
         self.aspect_combo.setCurrentText("auto")
         self.hwdec_combo.setCurrentText("auto-safe")
         self.renderer_combo.setCurrentIndex(0)
@@ -343,6 +361,9 @@ class VideoSettingsDialog(QDialog):
             "gamma": self.gamma_slider.value(),
             "zoom": float(self.zoom_label.text()),
             "rotate": rotate_idx * 90,
+            "mirror_horizontal": self.mirror_h_check.isChecked(),
+            "mirror_vertical": self.mirror_v_check.isChecked(),
+            "seek_thumbnail_preview": self.seek_thumb_check.isChecked(),
             "hwdec": self.hwdec_combo.currentText(),
             "renderer": self.renderer_combo.currentData(),
             "gpu_api": self.gpu_api_combo.currentData(),

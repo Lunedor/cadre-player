@@ -86,6 +86,61 @@ class UIEventsMixin:
         except (AttributeError, RuntimeError, TypeError):
             return False
 
+    def _apply_video_mirror_filters(self):
+        # Apply mirror/flip using plain vf filters for maximum compatibility.
+        h_enabled = bool(getattr(self, "_video_mirror_horizontal", False))
+        v_enabled = bool(getattr(self, "_video_mirror_vertical", False))
+        logging.info("Applying mirror filters: h=%s v=%s", h_enabled, v_enabled)
+        mirror_enabled = h_enabled or v_enabled
+
+        # Some hwdec modes can bypass vf filters; use copy-back while mirroring.
+        if mirror_enabled:
+            prev_hwdec = getattr(self, "_mirror_prev_hwdec", None)
+            if prev_hwdec is None:
+                try:
+                    self._mirror_prev_hwdec = str(getattr(self.player, "hwdec", "") or "")
+                except Exception:
+                    self._mirror_prev_hwdec = ""
+            try:
+                current_hwdec = str(getattr(self.player, "hwdec", "") or "")
+            except Exception:
+                current_hwdec = ""
+            if current_hwdec not in {"auto-copy", "no"}:
+                if self._safe_set_player_attr("hwdec", "auto-copy"):
+                    logging.info("Mirror: hwdec switched to auto-copy (was %r)", current_hwdec)
+        else:
+            prev_hwdec = getattr(self, "_mirror_prev_hwdec", None)
+            if prev_hwdec is not None:
+                if self._safe_set_player_attr("hwdec", prev_hwdec):
+                    logging.info("Mirror: hwdec restored to %r", prev_hwdec)
+                self._mirror_prev_hwdec = None
+        # Remove existing mirror filters first; repeat a few times in case both exist.
+        for _ in range(3):
+            for name in ("hflip", "vflip"):
+                try:
+                    self.player.command("vf", "remove", name)
+                except Exception:
+                    pass
+
+        if h_enabled:
+            try:
+                self.player.command("vf", "add", "hflip")
+                logging.info("Mirror filter added: hflip")
+            except Exception as e:
+                logging.warning("Mirror filter add failed (hflip): %s", e)
+        if v_enabled:
+            try:
+                self.player.command("vf", "add", "vflip")
+                logging.info("Mirror filter added: vflip")
+            except Exception as e:
+                logging.warning("Mirror filter add failed (vflip): %s", e)
+
+        try:
+            vf_state = self.player.command("get_property_native", "vf")
+            logging.info("Mirror vf after apply: %r", vf_state)
+        except Exception as e:
+            logging.debug("Mirror vf read failed: %s", e)
+
     def _save_zoom_setting(self):
         config = load_video_settings()
         config["zoom"] = self.window_zoom
@@ -107,6 +162,9 @@ class UIEventsMixin:
         pixmap = icon_volume_muted(22) if self._cached_muted else icon_volume(22)
         self.mute_btn.setIcon(QIcon(pixmap))
         self.mute_btn.setText("")
+        if hasattr(self, "popup_mute_btn"):
+            self.popup_mute_btn.setIcon(QIcon(pixmap))
+            self.popup_mute_btn.setText("")
 
     def update_fullscreen_icon(self):
         pixmap = icon_exit_fullscreen(24) if self.isFullScreen() else icon_fullscreen(24)
@@ -361,6 +419,7 @@ class UIEventsMixin:
 
         global_pos = QCursor.pos()
         local_pos = self.mapFromGlobal(global_pos)
+        volume_popup_active = hasattr(self, "volume_popup") and self.volume_popup.isVisible()
 
         margin = 20
         in_resize_area = (
@@ -405,6 +464,10 @@ class UIEventsMixin:
             if not self.overlay.isVisible():
                 self._sync_overlay_geometry()
                 self.overlay.show()
+        elif volume_popup_active:
+            if not self.overlay.isVisible():
+                self._sync_overlay_geometry()
+                self.overlay.show()
         elif self.rect().contains(local_pos) and local_pos.y() > (self.height() - 90):
             if not self.overlay.isVisible():
                 self._sync_overlay_geometry()
@@ -414,6 +477,18 @@ class UIEventsMixin:
                 pass
             elif local_pos.y() <= (self.height() - 90):
                 self.overlay.hide()
+                if hasattr(self, "volume_popup") and self.volume_popup.isVisible():
+                    self.volume_popup.hide()
+                if hasattr(self, "hide_seek_thumbnail_preview"):
+                    self.hide_seek_thumbnail_preview()
+
+        if (
+            hasattr(self, "overlay")
+            and hasattr(self, "seek_thumb_preview")
+            and not self.overlay.isVisible()
+            and self.seek_thumb_preview.isVisible()
+        ):
+            self.hide_seek_thumbnail_preview()
 
         if self.pinned_playlist:
             if not self.playlist_overlay.isVisible():
@@ -493,6 +568,8 @@ class UIEventsMixin:
                     win = getattr(self, attr, None)
                     if win and win.isVisible():
                         win.hide()
+                if hasattr(self, "volume_popup") and self.volume_popup.isVisible():
+                    self.volume_popup.hide()
             if hasattr(self, "title_bar"):
                 if self.isMaximized():
                     self.title_bar.max_btn.setIcon(QIcon(icon_restore(18)))
@@ -678,6 +755,8 @@ class UIEventsMixin:
             self.title_bar.hide()
         if hasattr(self, "overlay"):
             self.overlay.hide()
+        if hasattr(self, "volume_popup") and self.volume_popup.isVisible():
+            self.volume_popup.hide()
         if hasattr(self, "playlist_overlay") and not self.pinned_playlist:
             self.playlist_overlay.hide()
 
@@ -965,12 +1044,20 @@ class UIEventsMixin:
             self.window_zoom = float(config.get("zoom", 0.0))
             self._video_rotate_deg = int(config.get("rotate", 0) or 0) % 360
             self._set_mpv_property_safe("video_rotate", self._video_rotate_deg, allow_during_busy=True)
+            self._video_mirror_horizontal = bool(config.get("mirror_horizontal", False))
+            self._video_mirror_vertical = bool(config.get("mirror_vertical", False))
+            self._seek_thumbnail_preview = bool(config.get("seek_thumbnail_preview", False))
+            self._apply_video_mirror_filters()
             renderer = config.get("renderer", "gpu")
             hwdec = config.get("hwdec", "auto-safe")
             gpu_api = config.get("gpu_api", "auto")
             self._safe_set_player_attr("vo", renderer)
             self._safe_set_player_attr("gpu_api", gpu_api)
             self._safe_set_player_attr("hwdec", hwdec)
+            if hasattr(self, "seek_slider"):
+                self.seek_slider.set_preview_enabled(self._seek_thumbnail_preview)
+            if not self._seek_thumbnail_preview and hasattr(self, "hide_seek_thumbnail_preview"):
+                self.hide_seek_thumbnail_preview()
             self.sync_size()
         except (TypeError, ValueError, RuntimeError) as e:
             logging.warning("Error applying video settings: %s", e)
@@ -1520,6 +1607,9 @@ class UIEventsMixin:
             logging.debug("Failed to persist runtime subtitle settings: %s", e)
 
     def apply_stream_quality_setting(self):
+        # Reset cached per-URL quality lists to avoid stale results after runtime
+        # extractor/client option changes.
+        self._stream_quality_cache.clear()
         mapping = {
             "best": "bestvideo+bestaudio/best",
             "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
@@ -1530,6 +1620,11 @@ class UIEventsMixin:
         fmt = mapping.get(self.stream_quality, mapping["best"])
         try:
             self.player.ytdl_format = fmt
+        except Exception:
+            pass
+        try:
+            if 0 <= self.current_index < len(self.playlist):
+                self._apply_seek_profile_for_source(self.playlist[self.current_index])
         except Exception:
             pass
 
@@ -1621,6 +1716,10 @@ class UIEventsMixin:
         current_item = str(self.playlist[self.current_index])
         if not is_stream_url(current_item):
             return False
+        try:
+            self._apply_seek_profile_for_source(current_item)
+        except Exception:
+            pass
         pos = self._safe_player_float("time_pos", 0.0)
         was_paused = bool(self._cached_paused)
         self._quality_reload_until = time.monotonic() + 5.0
@@ -1721,6 +1820,8 @@ class UIEventsMixin:
             Qt.Key_U,
             Qt.Key_O,
             Qt.Key_L,
+            Qt.Key_X,
+            Qt.Key_Y,
         }
 
     def _canonicalize_mpv_key(self, key_name: str) -> str:
@@ -1960,6 +2061,12 @@ class UIEventsMixin:
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if hasattr(self, "volume_popup") and self.volume_popup.isVisible():
+                global_pos = event.globalPosition().toPoint()
+                on_main_btn = self.mute_btn.rect().contains(self.mute_btn.mapFromGlobal(global_pos))
+                on_popup = self.volume_popup.rect().contains(self.volume_popup.mapFromGlobal(global_pos))
+                if not on_main_btn and not on_popup:
+                    self.volume_popup.hide()
             if event.position().x() >= self.width() - 20 and event.position().y() >= self.height() - 20:
                 self._is_resizing = True
                 self.dragpos = event.globalPosition().toPoint()
@@ -2212,24 +2319,68 @@ class UIEventsMixin:
         self.show_status_overlay(tr("Brightness: {}").format(self.player.brightness))
         return True
 
+    def _save_video_transform_settings(self):
+        cfg = load_video_settings()
+        cfg["rotate"] = int(self._video_rotate_deg or 0) % 360
+        cfg["mirror_horizontal"] = bool(self._video_mirror_horizontal)
+        cfg["mirror_vertical"] = bool(self._video_mirror_vertical)
+        save_video_settings(cfg)
+
+    def rotate_video_90(self, angle=None):
+        # Supports both shortcut rotate (+90) and menu select absolute angle.
+        if isinstance(angle, bool):
+            angle = None
+        if angle in {0, 90, 180, 270}:
+            self._video_rotate_deg = int(angle)
+        else:
+            self._video_rotate_deg = (int(self._video_rotate_deg or 0) + 90) % 360
+        self._set_mpv_property_safe("video_rotate", self._video_rotate_deg, allow_during_busy=True)
+        self._save_video_transform_settings()
+        self.sync_size()
+        self.show_status_overlay(tr("Rotate: {}").format(f"{self._video_rotate_deg}°"))
+
+    def reset_video_rotation(self, *_args):
+        self._video_rotate_deg = 0
+        self._set_mpv_property_safe("video_rotate", self._video_rotate_deg, allow_during_busy=True)
+        self._save_video_transform_settings()
+        self.sync_size()
+        self.show_status_overlay(tr("Rotate reset"))
+
+    def toggle_mirror_horizontal(self, *_args):
+        self._video_mirror_horizontal = not bool(self._video_mirror_horizontal)
+        self._apply_video_mirror_filters()
+        self._save_video_transform_settings()
+        self.show_status_overlay(
+            tr("Mirror Horizontal: {}").format(
+                tr("On") if self._video_mirror_horizontal else tr("Off")
+            )
+        )
+
+    def toggle_mirror_vertical(self, *_args):
+        self._video_mirror_vertical = not bool(self._video_mirror_vertical)
+        self._apply_video_mirror_filters()
+        self._save_video_transform_settings()
+        self.show_status_overlay(
+            tr("Mirror Vertical: {}").format(
+                tr("On") if self._video_mirror_vertical else tr("Off")
+            )
+        )
+
     def _handle_rotation_shortcuts(self, key, mods) -> bool:
         if key == Qt.Key_R and (mods & Qt.ControlModifier):
-            self._video_rotate_deg = 0
-            self._set_mpv_property_safe("video_rotate", self._video_rotate_deg, allow_during_busy=True)
-            cfg = load_video_settings()
-            cfg["rotate"] = self._video_rotate_deg
-            save_video_settings(cfg)
-            self.sync_size()
-            self.show_status_overlay(tr("Rotate reset"))
+            self.reset_video_rotation()
             return True
         if key == Qt.Key_R:
-            self._video_rotate_deg = (int(self._video_rotate_deg or 0) + 90) % 360
-            self._set_mpv_property_safe("video_rotate", self._video_rotate_deg, allow_during_busy=True)
-            cfg = load_video_settings()
-            cfg["rotate"] = self._video_rotate_deg
-            save_video_settings(cfg)
-            self.sync_size()
-            self.show_status_overlay(tr("Rotate: {}°").format(self._video_rotate_deg))
+            self.rotate_video_90()
+            return True
+        return False
+
+    def _handle_mirror_shortcuts(self, key) -> bool:
+        if key == Qt.Key_X:
+            self.toggle_mirror_horizontal()
+            return True
+        if key == Qt.Key_Y:
+            self.toggle_mirror_vertical()
             return True
         return False
 
@@ -2290,6 +2441,8 @@ class UIEventsMixin:
         if self._handle_brightness_shortcut(key, mods):
             return
         if self._handle_rotation_shortcuts(key, mods):
+            return
+        if self._handle_mirror_shortcuts(key):
             return
         if self._handle_subtitle_runtime_shortcuts(key, mods):
             return

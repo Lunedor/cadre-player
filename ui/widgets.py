@@ -3,6 +3,7 @@ from urllib.parse import parse_qs, unquote
 from PySide6.QtCore import (
     QAbstractListModel,
     QModelIndex,
+    QPoint,
     QRect,
     QSize,
     Signal,
@@ -391,12 +392,16 @@ class ClickableSlider(QSlider):
 
 
 class ChapterSlider(ClickableSlider):
+    previewRequested = Signal(float, QPoint)
+    previewHidden = Signal()
+
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
         self._chapters: list[dict] = []
         self._current_time: float = 0.0
         self._hover_index: int = -1
         self._snap_threshold_px: int = 8
+        self._preview_enabled: bool = False
         self.setMouseTracking(True)
 
     @staticmethod
@@ -450,6 +455,24 @@ class ChapterSlider(ClickableSlider):
                 nearest = item
         return nearest if best_dist <= self._snap_threshold_px else None
 
+    def _time_at_x(self, x: float) -> float:
+        maximum = int(self.maximum())
+        if maximum <= 0:
+            return 0.0
+        groove = self._groove_rect()
+        if groove.width() <= 1:
+            return 0.0
+        left = groove.left()
+        right = groove.right()
+        px = max(left, min(right, int(round(x))))
+        ratio = (px - left) / max(1, (right - left))
+        return max(0.0, min(float(maximum), float(maximum) * ratio))
+
+    def set_preview_enabled(self, enabled: bool):
+        self._preview_enabled = bool(enabled)
+        if not self._preview_enabled:
+            self.previewHidden.emit()
+
     def set_current_time(self, seconds: float):
         try:
             self._current_time = max(0.0, float(seconds or 0.0))
@@ -492,11 +515,15 @@ class ChapterSlider(ClickableSlider):
             QToolTip.showText(QCursor.pos(), tip, self)
         else:
             QToolTip.hideText()
+        if self._preview_enabled and self.orientation() == Qt.Horizontal:
+            sec = self._time_at_x(event.position().x())
+            self.previewRequested.emit(float(sec), self.mapToGlobal(event.position().toPoint()))
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
         self._hover_index = -1
         QToolTip.hideText()
+        self.previewHidden.emit()
         self.update()
         super().leaveEvent(event)
 

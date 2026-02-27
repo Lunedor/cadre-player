@@ -46,6 +46,20 @@ def _to_choice(value, default: str, allowed: set[str]) -> str:
         return token
     return default
 
+
+def _to_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return bool(default)
+    return bool(value)
+
 def get_settings() -> QSettings:
     """Returns a QSettings object pointing to a visible .ini file."""
     path = get_user_data_path("settings.ini")
@@ -158,6 +172,9 @@ VIDEO_SATURATION_KEY = "video/saturation"
 VIDEO_GAMMA_KEY = "video/gamma"
 VIDEO_ZOOM_KEY = "video/zoom"
 VIDEO_ROTATE_KEY = "video/rotate"
+VIDEO_MIRROR_HORIZONTAL_KEY = "video/mirror_horizontal"
+VIDEO_MIRROR_VERTICAL_KEY = "video/mirror_vertical"
+SEEK_THUMBNAIL_PREVIEW_KEY = "video/seek_thumbnail_preview"
 VIDEO_HWDEC_KEY = "video/hwdec"
 VIDEO_RENDERER_KEY = "video/renderer"
 VIDEO_GPU_API_KEY = "video/gpu_api"
@@ -175,6 +192,9 @@ def load_video_settings():
         "gamma": _to_int(settings.value(VIDEO_GAMMA_KEY, 0), 0, -100, 100),
         "zoom": _to_float(settings.value(VIDEO_ZOOM_KEY, 0.0), 0.0, -2.0, 10.0),
         "rotate": rotate,
+        "mirror_horizontal": _to_bool(settings.value(VIDEO_MIRROR_HORIZONTAL_KEY, False), False),
+        "mirror_vertical": _to_bool(settings.value(VIDEO_MIRROR_VERTICAL_KEY, False), False),
+        "seek_thumbnail_preview": _to_bool(settings.value(SEEK_THUMBNAIL_PREVIEW_KEY, False), False),
         "hwdec": _to_choice(
             settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
             "auto-safe",
@@ -201,6 +221,9 @@ def save_video_settings(config: dict):
     if "gamma" in config: settings.setValue(VIDEO_GAMMA_KEY, int(config["gamma"]))
     if "zoom" in config: settings.setValue(VIDEO_ZOOM_KEY, float(config["zoom"]))
     if "rotate" in config: settings.setValue(VIDEO_ROTATE_KEY, int(config["rotate"]))
+    if "mirror_horizontal" in config: settings.setValue(VIDEO_MIRROR_HORIZONTAL_KEY, bool(config["mirror_horizontal"]))
+    if "mirror_vertical" in config: settings.setValue(VIDEO_MIRROR_VERTICAL_KEY, bool(config["mirror_vertical"]))
+    if "seek_thumbnail_preview" in config: settings.setValue(SEEK_THUMBNAIL_PREVIEW_KEY, bool(config["seek_thumbnail_preview"]))
     if "hwdec" in config: settings.setValue(VIDEO_HWDEC_KEY, config["hwdec"])
     if "renderer" in config: settings.setValue(VIDEO_RENDERER_KEY, config["renderer"])
     if "gpu_api" in config: settings.setValue(VIDEO_GPU_API_KEY, config["gpu_api"])

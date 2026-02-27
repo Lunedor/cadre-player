@@ -25,8 +25,8 @@ def create_main_context_menu(player, pos):
 
     menu.addSeparator()
 
-    # Standalone: Playback Speed
-    speed_menu = menu.addMenu(tr("Playback Speed"))
+    playback_settings_menu = menu.addMenu(tr("Playback Settings"))
+    speed_menu = playback_settings_menu.addMenu(tr("Playback Speed"))
     try:
         current_speed = float(player.player.speed or 1.0)
     except Exception as e:
@@ -71,9 +71,7 @@ def create_main_context_menu(player, pos):
     eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
     eq_action.triggered.connect(player.open_equalizer_dialog)
 
-    # Video Options
-    video_options_menu = menu.addMenu(tr("Video Options"))
-    quality_menu = video_options_menu.addMenu(tr("Video Quality"))
+    quality_menu = playback_settings_menu.addMenu(tr("Video Quality"))
     quality_options = player.get_stream_quality_menu_options()
     if not quality_options:
         quality_menu.setEnabled(False)
@@ -83,23 +81,43 @@ def create_main_context_menu(player, pos):
             q_act.setCheckable(True)
             q_act.setChecked(is_current)
             q_act.triggered.connect(lambda checked, q=value: player.set_stream_quality(q))
-
     # Aspect Ratio
-    aspect_menu = video_options_menu.addMenu(tr("Aspect Ratio"))
+    aspect_menu = playback_settings_menu.addMenu(tr("Aspect Ratio"))
     current_ar = load_aspect_ratio()
     ratios = ["auto", "16:9", "4:3", "16:10", "2.35:1", "2.39:1"]
     for r in ratios:
         label = tr("Auto (Original)") if r == "auto" else r
         act = aspect_menu.addAction(label)
         act.setCheckable(True)
-        if current_ar == r: act.setChecked(True)
+        if current_ar == r:
+            act.setChecked(True)
         act.triggered.connect(lambda checked, ar=r: player.set_aspect_ratio(ar))
 
-    video_settings_action = video_options_menu.addAction(tr("Video Settings")+"...")
-    video_settings_action.triggered.connect(player.open_video_settings)
+    rotate = playback_settings_menu.addMenu(tr("Rotate"))
+    current_arg = int(getattr(player, "_video_rotate_deg", 0) or 0) % 360
+    for angle in [0, 90, 180, 270]:
+        label = tr("{}°").format(angle)       
+        action = rotate.addAction(label)
+        action.setCheckable(True)
+        if current_arg == angle:
+            action.setChecked(True)
+        action.triggered.connect(lambda checked, a=angle: player.rotate_video_90(a))
+    rotate_reset = rotate.addAction(tr("Reset Rotation") + "\tCtrl+R")
+    rotate_reset.triggered.connect(player.reset_video_rotation)
 
-    ss_action = video_options_menu.addAction(tr("Screenshot") + "\tS")
-    ss_action.triggered.connect(player.screenshot_save_as)
+    mirror_h = playback_settings_menu.addAction(tr("Mirror Horizontal") + "\tX")
+    mirror_h.setCheckable(True)
+    mirror_h.setChecked(bool(getattr(player, "_video_mirror_horizontal", False)))
+    mirror_h.triggered.connect(player.toggle_mirror_horizontal)
+
+    mirror_v = playback_settings_menu.addAction(tr("Mirror Vertical") + "\tY")
+
+    mirror_v.setCheckable(True)
+    mirror_v.setChecked(bool(getattr(player, "_video_mirror_vertical", False)))
+    mirror_v.triggered.connect(player.toggle_mirror_vertical)
+
+    screenshot_action = playback_settings_menu.addAction(tr("Screenshot") + "\tS")
+    screenshot_action.triggered.connect(player.screenshot_save_as)
 
     # Subtitle Options
     subtitle_options_menu = menu.addMenu(tr("Subtitle Options"))
@@ -126,6 +144,8 @@ def create_main_context_menu(player, pos):
     
     sub_settings_action = subtitle_options_menu.addAction(tr("Subtitle Settings")+"...")
     sub_settings_action.triggered.connect(player.open_subtitle_settings)
+
+    menu.addAction(tr("Video Settings") + "...").triggered.connect(player.open_video_settings)
 
     menu.addSeparator()
 
