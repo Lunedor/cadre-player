@@ -37,7 +37,9 @@ It is focused on:
 - YouTube URL/playlist extraction through `yt-dlp`
 - Playback speed controls, shuffle, repeat modes
 - Visual chapter markers on the seekbar (from libmpv chapter metadata)
+- Optional seekbar thumbnail preview while hovering (`Video Settings -> Geometry -> Seek Thumbnail Preview`)
 - Subtitle settings, video tuning, and 10-band equalizer
+- Video geometry tools: rotation + mirror horizontal/vertical (X/Y shortcuts)
 - On-demand technical stats overlay via mpv `stats.lua` (`Shift+I`)
 - Power-user mpv integration: app-managed `mpv.conf` + `scripts/` (Lua/JS auto-loaded)
 - Session playlist snapshot with one-click restore from playlist controls
@@ -120,6 +122,8 @@ python main.py
 | 2 | Pan down only when video is zoomed |
 | R | Rotate video +90° |
 | Ctrl+R | Reset rotation |
+| X | Toggle mirror horizontal |
+| Y | Toggle mirror vertical |
 | B | Increase brightness |
 | Shift+B | Decrease brightness |
 | G | Subtitle delay -0.1s |
@@ -180,3 +184,4 @@ In packaged/frozen mode on Windows, files are stored in:
 ## License
 
 MIT License. See [LICENSE](LICENSE).
+
