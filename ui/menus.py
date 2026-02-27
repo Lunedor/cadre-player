@@ -186,6 +186,11 @@ def create_main_context_menu(player, pos):
     ontop_action.setChecked(player.always_on_top)
     ontop_action.triggered.connect(player.toggle_always_on_top)
 
+    restore_on_startup_action = view_menu.addAction(tr("Restore Session on Startup"))
+    restore_on_startup_action.setCheckable(True)
+    restore_on_startup_action.setChecked(bool(getattr(player, "restore_session_on_startup", False)))
+    restore_on_startup_action.triggered.connect(player.toggle_restore_session_on_startup)
+
     menu.addSeparator()
 
     # Standalone: Language

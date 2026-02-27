@@ -42,6 +42,7 @@ from ..settings import (
     load_equalizer_settings,
     load_sub_settings,
     load_video_settings,
+    save_restore_session_on_startup,
     save_aspect_ratio,
     save_language_setting,
     save_muted,
@@ -997,6 +998,12 @@ class UIEventsMixin:
         self._sync_playlist_overlay_geometry()
         self._sync_title_bar_geometry()
         self._enforce_overlay_stack()
+
+    def toggle_restore_session_on_startup(self):
+        self.restore_session_on_startup = not bool(getattr(self, "restore_session_on_startup", False))
+        save_restore_session_on_startup(self.restore_session_on_startup)
+        status = tr("On") if self.restore_session_on_startup else tr("Off")
+        self.show_status_overlay(tr("Restore session on startup: {}").format(status))
 
     def change_language(self, lang_code: str):
         save_language_setting(lang_code)

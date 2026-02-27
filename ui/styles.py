@@ -172,6 +172,29 @@ QCheckBox::indicator {
     height: 14px;
 }
 
+QCheckBox::indicator:unchecked {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.30);
+    border-radius: 4px;
+}
+
+QCheckBox::indicator:unchecked:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+QCheckBox::indicator:checked {
+    background: rgba(78, 178, 126, 0.95);
+    border: 1px solid rgba(185, 243, 212, 0.92);
+    border-radius: 4px;
+    image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
+}
+
+QCheckBox::indicator:checked:hover {
+    background: rgba(89, 196, 138, 0.98);
+    border: 1px solid rgba(210, 255, 229, 0.96);
+}
+
 QGroupBox {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;

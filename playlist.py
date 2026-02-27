@@ -94,7 +94,8 @@ def parse_local_m3u_with_meta(path: str) -> tuple[list[str], dict[str, str], dic
                 seen.add(key)
                 items.append(entry)
                 if pending_title:
-                    title_map[entry] = pending_title
+                    if not (_is_youtube_url(entry) and _is_placeholder_title(pending_title)):
+                        title_map[entry] = pending_title
                 if pending_duration is not None:
                     duration_map[entry] = float(pending_duration)
             pending_title = ""
@@ -169,6 +170,69 @@ def _youtube_direct_video_url(url: str) -> str:
     except Exception:
         pass
     return ""
+
+
+def _youtube_video_id(url: str) -> str:
+    try:
+        parsed = urlparse(str(url or "").strip())
+        host = (parsed.netloc or "").lower()
+        if "youtu.be" in host:
+            return parsed.path.strip("/").split("/", 1)[0].strip()
+        return parse_qs(parsed.query).get("v", [""])[0].strip()
+    except Exception:
+        return ""
+
+
+def _is_placeholder_title(title: str) -> bool:
+    token = str(title or "").strip().casefold()
+    if not token:
+        return True
+    return token in {"watch", "youtube", "youtube?", "video", "untitled", "unknown"}
+
+
+def _fallback_stream_title(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    if _is_youtube_url(raw):
+        vid = _youtube_video_id(raw)
+        return f"YouTube {vid}" if vid else "YouTube"
+    try:
+        parsed = urlparse(raw)
+        if parsed.scheme and parsed.netloc:
+            name = Path(unquote(parsed.path.rstrip("/"))).name
+            return name or parsed.netloc
+    except Exception:
+        pass
+    return raw
+
+
+def _extract_youtube_single_metadata(url: str) -> tuple[str, float | None]:
+    if yt_dlp is None:
+        return "", None
+    title = ""
+    duration = None
+    try:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": True,
+            "extract_flat": False,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if isinstance(info, dict):
+            title = str(info.get("title") or "").strip()
+            try:
+                raw_duration = info.get("duration")
+                if raw_duration is not None:
+                    duration = float(raw_duration)
+            except Exception:
+                duration = None
+    except Exception as e:
+        logging.info("YouTube single metadata fetch failed: url=%s err=%s", url, e)
+    return title, duration
 
 
 def _youtube_looks_like_playlist_url(url: str) -> bool:
@@ -514,6 +578,11 @@ class URLResolveWorker(QThread):
                         direct_video = _youtube_direct_video_url(url)
                         if direct_video and not _youtube_looks_like_playlist_url(url):
                             resolved = [direct_video]
+                            yt_title, yt_duration = _extract_youtube_single_metadata(direct_video)
+                            if yt_title and not _is_placeholder_title(yt_title):
+                                title_map[direct_video] = yt_title
+                            if yt_duration is not None and yt_duration >= 0:
+                                duration_map[direct_video] = float(yt_duration)
                             logging.info("Resolving URL as direct YouTube video: %s", url)
                         else:
                             logging.info("Resolving URL as YouTube extract: %s", url)
@@ -907,6 +976,8 @@ class PlaylistViewMixin:
         paths = [Path(p) for p in raw_paths if p]
         paths = [p for p in paths if p.exists()]
         if not paths:
+            if not raw_paths and bool(getattr(self, "restore_session_on_startup", False)):
+                self.restore_session_playlist(silent_if_missing=True)
             return
 
         if len(paths) == 1 and paths[0].is_file() and self.is_video_file(paths[0]):
@@ -1753,7 +1824,11 @@ class PlaylistViewMixin:
 
     def _apply_resolved_metadata(self, title_map=None, duration_map=None):
         for path, title in (title_map or {}).items():
-            self.playlist_titles[path] = title
+            value = str(title or "").strip()
+            if _is_youtube_url(str(path)) and _is_placeholder_title(value):
+                continue
+            if value:
+                self.playlist_titles[path] = value
         for path, seconds in (duration_map or {}).items():
             try:
                 sec = float(seconds)
@@ -1894,18 +1969,49 @@ class PlaylistViewMixin:
     def _write_m3u_playlist(self, path: str):
         with open(path, "w", encoding="utf-8") as f:
             f.write("#EXTM3U\n")
+            current_index = int(self.current_index) if 0 <= int(self.current_index) < len(self.playlist) else -1
+            current_path = ""
+            if current_index >= 0:
+                current_path = str(self.playlist[current_index])
+            f.write(f"#EXTCADRE:CURRENT_INDEX={current_index}\n")
+            f.write(f"#EXTCADRE:CURRENT_PATH={quote(current_path, safe='')}\n")
             for item_path in self.playlist:
                 name = self.playlist_titles.get(item_path, "").strip()
+                if _is_youtube_url(item_path) and _is_placeholder_title(name):
+                    name = ""
                 if not name:
                     if _is_stream_url(item_path):
-                        parsed = urlparse(item_path)
-                        name = Path(unquote(parsed.path or "")).name or item_path
+                        name = _fallback_stream_title(item_path)
                     else:
                         name = Path(item_path).name
                 raw_dur = self.playlist_raw_durations.get(item_path, -1)
                 dur_int = int(raw_dur) if raw_dur > 0 else -1
                 f.write(f"#EXTINF:{dur_int},{name}\n")
                 f.write(f"{item_path}\n")
+
+    def _read_session_snapshot_meta(self, path: str) -> tuple[int, str]:
+        current_index = -1
+        current_path = ""
+        try:
+            with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
+                for raw_line in f:
+                    line = str(raw_line or "").strip()
+                    if not line:
+                        continue
+                    if not line.startswith("#"):
+                        break
+                    if line.startswith("#EXTCADRE:CURRENT_INDEX="):
+                        value = line.split("=", 1)[1].strip()
+                        try:
+                            current_index = int(value)
+                        except (TypeError, ValueError):
+                            current_index = -1
+                    elif line.startswith("#EXTCADRE:CURRENT_PATH="):
+                        encoded = line.split("=", 1)[1].strip()
+                        current_path = unquote(encoded) if encoded else ""
+        except Exception as e:
+            logging.debug("Session snapshot metadata read failed: path=%s err=%s", path, e)
+        return current_index, current_path
 
     def _save_session_playlist_snapshot(self):
         path = self._session_playlist_path()
@@ -1918,27 +2024,37 @@ class PlaylistViewMixin:
         except Exception as e:
             logging.warning("Could not save session playlist: path=%s err=%s", path, e)
 
-    def restore_session_playlist(self):
+    def restore_session_playlist(self, silent_if_missing: bool = False):
         path = self._session_playlist_path()
         if not os.path.exists(path):
-            self.show_status_overlay(tr("No saved session playlist"))
+            if not silent_if_missing:
+                self.show_status_overlay(tr("No saved session playlist"))
             return
         try:
+            target_index, target_path = self._read_session_snapshot_meta(path)
             entries, title_map, duration_map = parse_local_m3u_with_meta(path)
             if entries:
-                self._import_playlist_entries(
-                    entries,
-                    replace_existing=True,
-                    title_map=title_map,
-                    duration_map=duration_map,
-                    resolve_stream_urls=False,
-                )
+                self._clear_playlist_before_import()
+                self._apply_resolved_metadata(title_map=title_map, duration_map=duration_map)
+                self.append_to_playlist(entries, play_new=False)
+                if target_path and target_path in self.playlist:
+                    self.current_index = self.playlist.index(target_path)
+                elif 0 <= target_index < len(self.playlist):
+                    self.current_index = int(target_index)
+                elif self.playlist:
+                    self.current_index = 0
+                self.rebuild_shuffle_order(keep_current=True)
+                self.highlight_current_item()
+                if self.playlist and self.current_index >= 0:
+                    self.play_current()
                 self.show_status_overlay(tr("Restored {} session items").format(len(entries)))
             else:
-                self.show_status_overlay(tr("Saved session playlist is empty"))
+                if not silent_if_missing:
+                    self.show_status_overlay(tr("Saved session playlist is empty"))
         except Exception as e:
             logging.warning("Could not restore session playlist: path=%s err=%s", path, e)
-            self.show_status_overlay(tr("Could not restore session playlist"))
+            if not silent_if_missing:
+                self.show_status_overlay(tr("Could not restore session playlist"))
 
     def save_playlist_m3u(self):
         if not self.playlist:

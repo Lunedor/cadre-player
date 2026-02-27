@@ -1,5 +1,4 @@
 ﻿import os
-import re
 import sys
 import subprocess
 import logging
@@ -31,10 +30,10 @@ from PySide6.QtWidgets import (
 from .settings import (
     load_muted,
     load_repeat,
+    load_restore_session_on_startup,
     load_shuffle,
     load_volume,
     load_video_settings,
-    save_video_settings,
     load_aspect_ratio,
     load_resume_position,
     load_pinned_settings,
@@ -51,6 +50,7 @@ from .ui.icons import (
     icon_search,
     icon_maximize,
     icon_restore,
+    icon_restore_playlist,
     icon_fullscreen,
     icon_shuffle,
     icon_save,
@@ -240,6 +240,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         pinned = load_pinned_settings()
         self.pinned_controls = pinned["controls"]
         self.pinned_playlist = pinned["playlist"]
+        self.restore_session_on_startup = load_restore_session_on_startup(False)
 
         self._drag_pos = None
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
@@ -914,7 +915,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
         self.restore_session_btn = IconButton(tooltip=tr("Restore last session playlist"), parent=self)
         self.restore_session_btn.clicked.connect(self.restore_session_playlist)
-        self.restore_session_btn.setIcon(QIcon(icon_folder(22)))
+        self.restore_session_btn.setIcon(QIcon(icon_restore_playlist(22)))
 
 
         self.remove_btn = IconButton(tooltip=tr("Remove from playlist"), parent=self)
@@ -1207,9 +1208,13 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         )
 
     def _display_name_for_track(self, current_file) -> str:
-        display_name = self.playlist_titles.get(str(current_file))
+        display_name = str(self.playlist_titles.get(str(current_file), "")).strip()
         if display_name:
-            return display_name
+            if not (
+                _is_youtube_url(str(current_file))
+                and display_name.casefold() in {"watch", "youtube", "youtube?", "video", "untitled", "unknown"}
+            ):
+                return display_name
         try:
             parsed = urlparse(str(current_file))
             if parsed.scheme and parsed.netloc:

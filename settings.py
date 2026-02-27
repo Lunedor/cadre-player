@@ -15,6 +15,7 @@ STREAM_AUTH_ENABLED_KEY = "network/stream_auth_enabled"
 STREAM_AUTH_USERNAME_KEY = "network/stream_auth_username"
 STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
 STREAM_QUALITY_KEY = "network/stream_quality"
+SESSION_RESTORE_ON_STARTUP_KEY = "player/restore_session_on_startup"
 
 def _to_int(value, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
     try:
@@ -338,4 +339,15 @@ def load_stream_quality(default: str = "best") -> str:
 def save_stream_quality(value: str):
     settings = get_settings()
     settings.setValue(STREAM_QUALITY_KEY, str(value or "best"))
+    settings.sync()
+
+
+def load_restore_session_on_startup(default: bool = False) -> bool:
+    settings = get_settings()
+    return settings.value(SESSION_RESTORE_ON_STARTUP_KEY, default, type=bool)
+
+
+def save_restore_session_on_startup(value: bool):
+    settings = get_settings()
+    settings.setValue(SESSION_RESTORE_ON_STARTUP_KEY, bool(value))
     settings.sync()

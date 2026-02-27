@@ -1,7 +1,7 @@
 from pathlib import Path
 import math
 from PySide6.QtCore import Qt, QPointF, QRectF
-from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPixmap, QPen, QIcon, QFont
+from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPixmap, QPen, QIcon, QFont, QPolygonF
 
 
 def icon_play(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
@@ -491,6 +491,49 @@ def icon_restore(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixm
     painter.end()
     return pm
 
+def icon_restore_playlist(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    
+    pen = QPen(color)
+    pen_width = max(1.2, size * 0.08)
+    pen.setWidthF(pen_width)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    
+    # Calculate center and radius for the circular arrow
+    cx = size / 2.0
+    cy = size / 2.0
+    r = size * 0.3
+    
+    # Draw a 270-degree counter-clockwise arc
+    # Qt angles: 0 is 3 o'clock, 90 is 12 o'clock.
+    # Start at -180 (9 o'clock) and span 270 degrees to end exactly at 90 (12 o'clock).
+    rect = QRectF(cx - r, cy - r, r * 2, r * 2)
+    start_angle = -180 * 16
+    span_angle = 270 * 16
+    painter.drawArc(rect, start_angle, span_angle)
+    
+    # Draw the arrowhead at the 12 o'clock position, pointing left
+    arrow_size = pen_width * 2.8
+    tip_x = cx - pen_width * 0.5
+    tip_y = cy - r
+    
+    # Define the triangle coordinates for the arrowhead
+    p1 = QPointF(tip_x - arrow_size * 0.5, tip_y)
+    p2 = QPointF(tip_x + arrow_size * 0.5, tip_y - arrow_size * 0.6)
+    p3 = QPointF(tip_x + arrow_size * 0.5, tip_y + arrow_size * 0.6)
+    
+    # Switch to a solid brush to fill the arrowhead
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(QPolygonF([p1, p2, p3]))
+    
+    painter.end()
+    return pm
 
 def icon_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     pm = QPixmap(size, size)
@@ -528,26 +571,48 @@ def icon_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
 def icon_exit_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
+    
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
+    
     pen = QPen(color)
     pen.setWidthF(max(1.5, size * 0.08))
-    pen.setCapStyle(Qt.RoundCap)
+    # Square caps and miter joins ensure the elbows of the brackets form sharp 90-degree angles
+    pen.setCapStyle(Qt.SquareCap)
+    pen.setJoinStyle(Qt.MiterJoin)
     painter.setPen(pen)
     
-    pad = int(size * 0.20)
-    center = size // 2
-    len_line = int(size * 0.15)
+    c = size / 2.0
+    gap = size * 0.12  # Distance from the center to the bracket vertex
+    arm = size * 0.25  # Length of the bracket arms
     
-    # Arrorws pointing inward
-    # Top Left
-    painter.drawLine(pad, pad, center - 2, center - 2)
-    # Top Right
-    painter.drawLine(size - pad, pad, center + 2, center - 2)
-    # Bottom Left
-    painter.drawLine(pad, size - pad, center - 2, center + 2)
-    # Bottom Right
-    painter.drawLine(size - pad, size - pad, center + 2, center + 2)
+    # Top-Left inward bracket
+    painter.drawPolyline([
+        QPointF(c - gap - arm, c - gap),
+        QPointF(c - gap, c - gap),
+        QPointF(c - gap, c - gap - arm)
+    ])
+    
+    # Top-Right inward bracket
+    painter.drawPolyline([
+        QPointF(c + gap + arm, c - gap),
+        QPointF(c + gap, c - gap),
+        QPointF(c + gap, c - gap - arm)
+    ])
+    
+    # Bottom-Left inward bracket
+    painter.drawPolyline([
+        QPointF(c - gap - arm, c + gap),
+        QPointF(c - gap, c + gap),
+        QPointF(c - gap, c + gap + arm)
+    ])
+    
+    # Bottom-Right inward bracket
+    painter.drawPolyline([
+        QPointF(c + gap + arm, c + gap),
+        QPointF(c + gap, c + gap),
+        QPointF(c + gap, c + gap + arm)
+    ])
     
     painter.end()
     return pm
