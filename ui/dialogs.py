@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIntValidator
+import re
 from .styles import DIALOG_STYLE
 from ..settings import (
     load_sub_delay_for_file,
@@ -555,6 +556,7 @@ class OpenSubtitlesSettingsDialog(QDialog):
         self._configure_language_combo(self.lang_combo, compact=False)
         self.lang_combo.setEnabled(False)
         self._saved_lang = settings.get("os_default_lang", "en")
+        self.lang_combo.currentIndexChanged.connect(self._persist_language_choice)
         self._populate_lang_combo_fallback()
         self._start_language_load()
         form.addRow(tr("Default Language") + ":", self.lang_combo)
@@ -574,7 +576,7 @@ class OpenSubtitlesSettingsDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _save(self):
-        selected_lang = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        selected_lang = self._selected_language_code()
         save_opensubtitles_settings(
             {
                 "os_username": self.username_edit.text().strip(),
@@ -612,6 +614,7 @@ class OpenSubtitlesSettingsDialog(QDialog):
 
     def _on_languages_failed(self, _error: str):
         self.lang_combo.setEnabled(True)
+        self._persist_language_choice()
 
     def _configure_language_combo(self, combo: QComboBox, compact: bool):
         view = QListView(combo)
@@ -621,6 +624,15 @@ class OpenSubtitlesSettingsDialog(QDialog):
         combo.setMaxVisibleItems(14)
         combo.setMinimumWidth(220 if not compact else 160)
         combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def _selected_language_code(self) -> str:
+        raw = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        if not re.fullmatch(r"[a-z0-9-]{2,12}", raw):
+            return "en"
+        return raw
+
+    def _persist_language_choice(self):
+        save_opensubtitles_settings({"os_default_lang": self._selected_language_code()})
 
 
 class OpenSubtitlesDialog(QDialog):
@@ -670,6 +682,7 @@ class OpenSubtitlesDialog(QDialog):
         self._configure_language_combo(self.lang_combo, compact=True)
         self.lang_combo.setEnabled(False)
         self._saved_lang = load_opensubtitles_settings().get("os_default_lang", "en")
+        self.lang_combo.currentIndexChanged.connect(self._persist_language_choice)
         self._populate_lang_combo_fallback()
         self._start_language_load()
         top_row.addWidget(self.lang_combo)
@@ -724,7 +737,7 @@ class OpenSubtitlesDialog(QDialog):
 
     def _create_worker(self, mode: str, file_id: int | None = None):
         creds = load_opensubtitles_settings()
-        language_code = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        language_code = self._selected_language_code()
         return OpenSubtitlesWorker(
             mode=mode,
             credentials=creds,
@@ -836,6 +849,7 @@ class OpenSubtitlesDialog(QDialog):
 
     def _on_languages_failed(self, _error: str):
         self.lang_combo.setEnabled(True)
+        self._persist_language_choice()
 
     def _configure_language_combo(self, combo: QComboBox, compact: bool):
         view = QListView(combo)
@@ -845,6 +859,15 @@ class OpenSubtitlesDialog(QDialog):
         combo.setMaxVisibleItems(14)
         combo.setMinimumWidth(160 if compact else 220)
         combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def _selected_language_code(self) -> str:
+        raw = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        if not re.fullmatch(r"[a-z0-9-]{2,12}", raw):
+            return "en"
+        return raw
+
+    def _persist_language_choice(self):
+        save_opensubtitles_settings({"os_default_lang": self._selected_language_code()})
 
 
 class EqualizerDialog(QDialog):
