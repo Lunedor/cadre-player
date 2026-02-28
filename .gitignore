@@ -45,6 +45,7 @@ Thumbs.db
 *.reg
 *.spec
 *.m3u
+opensubtitles_tokens.json
 mpv.config
 todo.md
 logs.txt
