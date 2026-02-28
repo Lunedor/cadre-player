@@ -133,7 +133,12 @@ def create_main_context_menu(player, pos):
         none_action.triggered.connect(lambda: player.select_subtitle_track("no"))
         
         for t in sub_tracks:
-            title = t.get('title') or t.get('lang') or f"Track {t['id']}"
+            raw_title = str(t.get('title') or "").strip()
+            raw_lang = str(t.get('lang') or "").strip()
+            if raw_title and raw_title.lower().endswith((".srt", ".ass", ".ssa", ".sub", ".vtt")) and raw_lang:
+                title = raw_lang
+            else:
+                title = raw_title or raw_lang or f"Track {t['id']}"
             action = sub_menu.addAction(title)
             action.setCheckable(True)
             if t['selected']: action.setChecked(True)
@@ -141,6 +146,9 @@ def create_main_context_menu(player, pos):
 
     add_sub_action = subtitle_options_menu.addAction(tr("Add Subtitle File")+"...")
     add_sub_action.triggered.connect(player.add_subtitle_file)
+
+    download_sub_action = subtitle_options_menu.addAction(tr("Download from OpenSubtitles") + "...\tShift+S")
+    download_sub_action.triggered.connect(player.open_opensubtitles_dialog)
     
     sub_settings_action = subtitle_options_menu.addAction(tr("Subtitle Settings")+"...")
     sub_settings_action.triggered.connect(player.open_subtitle_settings)

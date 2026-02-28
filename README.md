@@ -39,10 +39,14 @@ It is focused on:
 - Visual chapter markers on the seekbar (from libmpv chapter metadata)
 - Optional seekbar thumbnail preview while hovering (`Video Settings -> Geometry -> Seek Thumbnail Preview`)
 - Subtitle settings, video tuning, and 10-band equalizer
+- OpenSubtitles.com integration (search + download + apply in-app, `Shift+S`)
+- Downloaded subtitles are stored per media in `%APPDATA%\CadrePlayer\subtitles\` and auto-loaded on replay
+- Subtitle delay is saved per file (instead of one global delay)
 - Video geometry tools: rotation + mirror horizontal/vertical (X/Y shortcuts)
 - On-demand technical stats overlay via mpv `stats.lua` (`Shift+I`)
 - Power-user mpv integration: app-managed `mpv.conf` + `scripts/` (Lua/JS auto-loaded)
 - Session playlist snapshot with one-click restore from playlist controls
+- Auto-restore last saved session playlist on startup when launching without explicit media arguments
 - Stream import feedback with summary toast (`Imported X, failed Y`) and detailed log entries
 - Resume position per item
 - Playlist save/load
@@ -133,6 +137,7 @@ python main.py
 | K | Subtitle size +1 |
 | U | Subtitle position -1 |
 | I | Subtitle position +1 |
+| Shift+S | Open OpenSubtitles dialog |
 | Shift+I | Toggle mpv technical stats overlay (`stats/display-stats-toggle`) |
 
 ## mpv Power-User Config
@@ -164,6 +169,7 @@ In development mode (running from source), files are kept in the project root:
 
 In packaged/frozen mode on Windows, files are stored in:
 - `%APPDATA%\CadrePlayer\`
+  - includes `subtitles/` (downloaded OpenSubtitles files) and `opensubtitles_tokens.json` (cached OpenSubtitles JWT tokens)
 
 ## Troubleshooting
 
@@ -179,7 +185,7 @@ In packaged/frozen mode on Windows, files are stored in:
 
 ## Known Issues
 
-- Cannot seek or start from a certain time with high-quality and long YouTube videos. This is related to yt-dlp, mpv, and YouTube stream logic, which I have not yet figured out how to fix.
+- Cannot seek or start from a certain time with high-quality and long YouTube videos. This is related to yt-dlp, mpv, and YouTube stream logic, which I have not yet figured out how to fix. You can try different codec options from the Video Quality menu; H.264 and AV1 produce better results for this issue.
 
 ## Project Structure
 

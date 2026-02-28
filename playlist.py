@@ -1021,7 +1021,7 @@ class PlaylistViewMixin:
         paths = [Path(p) for p in raw_paths if p]
         paths = [p for p in paths if p.exists()]
         if not paths:
-            if not raw_paths and bool(getattr(self, "restore_session_on_startup", False)):
+            if not raw_paths:
                 self.restore_session_playlist(silent_if_missing=True)
             return
 

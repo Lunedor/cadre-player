@@ -1,20 +1,32 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QComboBox, QSlider, QPushButton, QGroupBox, QFormLayout, QLineEdit,
-    QCheckBox
+    QCheckBox, QListWidget, QListWidgetItem, QMessageBox, QListView, QSizePolicy
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIntValidator
 from .styles import DIALOG_STYLE
 from ..settings import (
+    load_sub_delay_for_file,
     load_sub_settings, save_sub_settings,
     load_video_settings, save_video_settings,
     load_aspect_ratio, save_aspect_ratio,
     load_equalizer_settings, save_equalizer_settings,
-    load_stream_auth_settings, save_stream_auth_settings
+    save_sub_delay_for_file,
+    load_stream_auth_settings, save_stream_auth_settings,
+    load_opensubtitles_settings, save_opensubtitles_settings,
 )
 from ..i18n import tr
 from .widgets import ClickableSlider
+from ..utils import OpenSubtitlesLanguagesWorker, OpenSubtitlesWorker, media_query_from_source
+
+
+FALLBACK_OS_LANG_CODES = [
+    "en", "es", "fr", "de", "it", "pt", "tr", "ru", "ar", "ja", "ko", "zh",
+    "nl", "pl", "sv", "no", "da", "fi", "el", "he", "uk", "ro", "hu", "cs",
+    "sk", "bg", "hr", "sr", "sl", "et", "lv", "lt", "id", "ms", "th", "vi",
+    "hi", "bn", "fa", "ur",
+]
 
 class SubtitleSettingsDialog(QDialog):
     def __init__(self, player_window, parent=None):
@@ -31,6 +43,13 @@ class SubtitleSettingsDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         sub_config = load_sub_settings()
+        self._current_media_source = ""
+        if hasattr(self.player_window, "get_current_media_source"):
+            try:
+                self._current_media_source = str(self.player_window.get_current_media_source() or "")
+            except Exception:
+                self._current_media_source = ""
+        delay_value = load_sub_delay_for_file(self._current_media_source, float(sub_config.get("delay", 0.0)))
 
         # Appearance Group
         appearance_group = QGroupBox(tr("Appearance"))
@@ -108,7 +127,7 @@ class SubtitleSettingsDialog(QDialog):
         self.delay_minus.setObjectName("AdjustBtn")
         self.delay_minus.clicked.connect(lambda: self.adjust_delay(-0.1))
         
-        self.delay_label = QLabel(f"{sub_config['delay']:.1f} s")
+        self.delay_label = QLabel(f"{delay_value:.1f} s")
         self.delay_label.setObjectName("ValLabel")
         self.delay_label.setAlignment(Qt.AlignCenter)
         
@@ -161,9 +180,11 @@ class SubtitleSettingsDialog(QDialog):
             "color": self.color_map[self.sub_color_combo.currentText()],
             "back_style": back_style_en,
             "pos": self.pos_slider.value(),
-            "delay": float(self.delay_label.text().replace(" s", ""))
         }
         save_sub_settings(config)
+        delay_value = float(self.delay_label.text().replace(" s", ""))
+        if self._current_media_source:
+            save_sub_delay_for_file(self._current_media_source, delay_value)
         self.player_window.apply_subtitle_settings()
 
 
@@ -503,6 +524,327 @@ class URLInputDialog(QDialog):
             "username": "",
             "password": "",
         }
+
+
+class OpenSubtitlesSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("OpenSubtitles Settings"))
+        self.setMinimumWidth(460)
+        self.setStyleSheet(DIALOG_STYLE)
+
+        settings = load_opensubtitles_settings()
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.username_edit = QLineEdit(settings["os_username"])
+        self.username_edit.setPlaceholderText(tr("OpenSubtitles username or email"))
+        form.addRow(tr("Username") + ":", self.username_edit)
+
+        self.password_edit = QLineEdit(settings["os_password"])
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setPlaceholderText(tr("OpenSubtitles password"))
+        form.addRow(tr("Password") + ":", self.password_edit)
+
+        self.lang_combo = QComboBox()
+        self._configure_language_combo(self.lang_combo, compact=False)
+        self.lang_combo.setEnabled(False)
+        self._saved_lang = settings.get("os_default_lang", "en")
+        self._populate_lang_combo_fallback()
+        self._start_language_load()
+        form.addRow(tr("Default Language") + ":", self.lang_combo)
+
+        layout.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton(tr("Cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton(tr("Save"))
+        save_btn.setObjectName("PrimaryButton")
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def _save(self):
+        selected_lang = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        save_opensubtitles_settings(
+            {
+                "os_username": self.username_edit.text().strip(),
+                "os_password": self.password_edit.text(),
+                "os_default_lang": selected_lang or "en",
+            }
+        )
+        self.accept()
+
+    def _populate_lang_combo_fallback(self):
+        self.lang_combo.clear()
+        for code in FALLBACK_OS_LANG_CODES:
+            self.lang_combo.addItem(code.upper(), code)
+        idx = self.lang_combo.findData(self._saved_lang)
+        self.lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _start_language_load(self):
+        self._lang_worker = OpenSubtitlesLanguagesWorker(self)
+        self._lang_worker.signals.finished.connect(self._on_languages_loaded)
+        self._lang_worker.signals.error.connect(self._on_languages_failed)
+        self._lang_worker.start()
+
+    def _on_languages_loaded(self, rows: list):
+        if not rows:
+            self._on_languages_failed("")
+            return
+        current = self._saved_lang
+        self.lang_combo.clear()
+        for code, name in rows:
+            label = f"{name} ({code})"
+            self.lang_combo.addItem(label, code)
+        idx = self.lang_combo.findData(current)
+        self.lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.lang_combo.setEnabled(True)
+
+    def _on_languages_failed(self, _error: str):
+        self.lang_combo.setEnabled(True)
+
+    def _configure_language_combo(self, combo: QComboBox, compact: bool):
+        view = QListView(combo)
+        view.setUniformItemSizes(True)
+        view.setMinimumWidth(360 if not compact else 320)
+        combo.setView(view)
+        combo.setMaxVisibleItems(14)
+        combo.setMinimumWidth(220 if not compact else 160)
+        combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+
+class OpenSubtitlesDialog(QDialog):
+    subtitle_downloaded = Signal(bytes, str, str, str)
+
+    def __init__(self, media_source: str, parent=None):
+        super().__init__(parent)
+        self.media_source = str(media_source or "")
+        self._search_worker = None
+        self._download_worker = None
+
+        self.setWindowTitle(tr("Download Subtitles"))
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(420)
+        self.setStyleSheet(DIALOG_STYLE)
+        self.setStyleSheet(
+            DIALOG_STYLE
+            + """
+            QDialog { background-color: #121212; }
+            QLabel { color: #E6E6E6; }
+            QLineEdit, QComboBox, QListWidget {
+                background-color: #1B1B1B;
+                color: #F0F0F0;
+                border: 1px solid #2E2E2E;
+                border-radius: 8px;
+                padding: 6px 8px;
+            }
+            QComboBox QAbstractItemView, QListWidget {
+                selection-background-color: #303A46;
+                selection-color: #FFFFFF;
+            }
+            QListWidget::item { padding: 8px 10px; }
+            QListWidget::item:hover { background-color: #252A31; }
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        top_row = QHBoxLayout()
+        self.search_edit = QLineEdit(media_query_from_source(self.media_source))
+        self.search_edit.setPlaceholderText(tr("Search query"))
+        top_row.addWidget(self.search_edit, 1)
+
+        self.lang_combo = QComboBox()
+        self._configure_language_combo(self.lang_combo, compact=True)
+        self.lang_combo.setEnabled(False)
+        self._saved_lang = load_opensubtitles_settings().get("os_default_lang", "en")
+        self._populate_lang_combo_fallback()
+        self._start_language_load()
+        top_row.addWidget(self.lang_combo)
+
+        self.search_btn = QPushButton(tr("Search"))
+        self.search_btn.setObjectName("PrimaryButton")
+        self.search_btn.setMinimumWidth(96)
+        self.search_btn.clicked.connect(self.start_search)
+        top_row.addWidget(self.search_btn)
+        layout.addLayout(top_row)
+
+        self.results_list = QListWidget()
+        self.results_list.itemSelectionChanged.connect(self._on_selection_changed)
+        layout.addWidget(self.results_list, 1)
+
+        bottom_row = QHBoxLayout()
+        self.settings_btn = QPushButton(tr("OpenSubtitles Settings"))
+        self.settings_btn.clicked.connect(self.open_settings_dialog)
+        bottom_row.addWidget(self.settings_btn)
+
+        self.status_label = QLabel("")
+        self.status_label.setVisible(False)
+        bottom_row.addWidget(self.status_label, 1)
+
+        self.download_btn = QPushButton(tr("Download & Apply"))
+        self.download_btn.setEnabled(False)
+        self.download_btn.clicked.connect(self.start_download)
+        bottom_row.addWidget(self.download_btn)
+        layout.addLayout(bottom_row)
+
+    def _set_status(self, text: str):
+        text = str(text or "").strip()
+        if text:
+            self.status_label.setText(text)
+            self.status_label.show()
+        else:
+            self.status_label.clear()
+            self.status_label.hide()
+
+    def _set_busy(self, busy: bool):
+        self.search_btn.setEnabled(not busy)
+        self.download_btn.setEnabled(not busy and self.results_list.currentItem() is not None)
+        self.search_edit.setEnabled(not busy)
+        self.lang_combo.setEnabled(not busy)
+        self.settings_btn.setEnabled(not busy)
+
+    def _on_selection_changed(self):
+        if self._search_worker and self._search_worker.isRunning():
+            self.download_btn.setEnabled(False)
+            return
+        self.download_btn.setEnabled(self.results_list.currentItem() is not None)
+
+    def _create_worker(self, mode: str, file_id: int | None = None):
+        creds = load_opensubtitles_settings()
+        language_code = str(self.lang_combo.currentData() or self.lang_combo.currentText() or "en").strip().lower()
+        return OpenSubtitlesWorker(
+            mode=mode,
+            credentials=creds,
+            media_source=self.media_source,
+            query=self.search_edit.text().strip(),
+            language=language_code or "en",
+            file_id=file_id,
+            parent=self,
+        )
+
+    def open_settings_dialog(self):
+        dialog = OpenSubtitlesSettingsDialog(self)
+        if dialog.exec():
+            lang = load_opensubtitles_settings().get("os_default_lang", "en")
+            self._saved_lang = lang
+            idx = self.lang_combo.findData(lang)
+            if idx >= 0:
+                self.lang_combo.setCurrentIndex(idx)
+
+    def start_search(self):
+        self.results_list.clear()
+        self.download_btn.setEnabled(False)
+        self._set_busy(True)
+        self._set_status(tr("Searching..."))
+
+        worker = self._create_worker("search")
+        self._search_worker = worker
+        worker.signals.status_changed.connect(self._set_status)
+        worker.signals.search_finished.connect(self._on_search_finished)
+        worker.signals.error_occurred.connect(self._on_worker_error)
+        worker.finished.connect(self._on_search_worker_finished)
+        worker.start()
+
+    def _on_search_finished(self, results: list):
+        for row in results:
+            item = QListWidgetItem(
+                f"{row.get('name', 'Unknown')} | {row.get('language', 'n/a')} | {tr('Rating')}: {row.get('rating', 'N/A')}"
+            )
+            item.setData(Qt.UserRole, row)
+            self.results_list.addItem(item)
+        if not results:
+            self._set_status(tr("No subtitles found."))
+            return
+        self._set_status("")
+
+    def _on_search_worker_finished(self):
+        self._set_busy(False)
+
+    def _on_worker_error(self, message: str):
+        self._set_busy(False)
+        self._set_status("")
+        QMessageBox.warning(self, tr("OpenSubtitles"), str(message or tr("Operation failed.")))
+
+    def start_download(self):
+        item = self.results_list.currentItem()
+        if item is None:
+            return
+        data = item.data(Qt.UserRole) or {}
+        file_id = data.get("file_id")
+        if not file_id:
+            return
+
+        self._set_busy(True)
+        self._set_status(tr("Downloading..."))
+        worker = self._create_worker("download", file_id=int(file_id))
+        self._download_worker = worker
+        worker.signals.status_changed.connect(self._set_status)
+        worker.signals.download_finished.connect(self._on_download_finished)
+        worker.signals.error_occurred.connect(self._on_worker_error)
+        worker.finished.connect(self._on_download_worker_finished)
+        worker.start()
+
+    def _on_download_finished(self, content: bytes, filename: str):
+        item = self.results_list.currentItem()
+        data = item.data(Qt.UserRole) if item is not None else {}
+        language = str((data or {}).get("language", "")).strip().lower()
+        label = str((data or {}).get("name", "")).strip()
+        self.subtitle_downloaded.emit(content, filename, language, label)
+        self._set_status("")
+        self.accept()
+
+    def _on_download_worker_finished(self):
+        self._set_busy(False)
+
+    def _populate_lang_combo_fallback(self):
+        self.lang_combo.clear()
+        for code in FALLBACK_OS_LANG_CODES:
+            self.lang_combo.addItem(code.upper(), code)
+        idx = self.lang_combo.findData(self._saved_lang)
+        self.lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _start_language_load(self):
+        self._lang_worker = OpenSubtitlesLanguagesWorker(self)
+        self._lang_worker.signals.finished.connect(self._on_languages_loaded)
+        self._lang_worker.signals.error.connect(self._on_languages_failed)
+        self._lang_worker.start()
+
+    def _on_languages_loaded(self, rows: list):
+        if not rows:
+            self._on_languages_failed("")
+            return
+        current = str(self.lang_combo.currentData() or self._saved_lang or "en").strip().lower()
+        self.lang_combo.clear()
+        for code, name in rows:
+            self.lang_combo.addItem(f"{name} ({code.upper()})", code)
+        idx = self.lang_combo.findData(current)
+        self.lang_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.lang_combo.setEnabled(True)
+
+    def _on_languages_failed(self, _error: str):
+        self.lang_combo.setEnabled(True)
+
+    def _configure_language_combo(self, combo: QComboBox, compact: bool):
+        view = QListView(combo)
+        view.setUniformItemSizes(True)
+        view.setMinimumWidth(320 if compact else 360)
+        combo.setView(view)
+        combo.setMaxVisibleItems(14)
+        combo.setMinimumWidth(160 if compact else 220)
+        combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
 
 class EqualizerDialog(QDialog):

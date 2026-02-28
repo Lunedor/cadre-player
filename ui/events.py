@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .dialogs import SubtitleSettingsDialog, URLInputDialog, VideoSettingsDialog
+from .dialogs import (
+    OpenSubtitlesDialog,
+    OpenSubtitlesSettingsDialog,
+    SubtitleSettingsDialog,
+    URLInputDialog,
+    VideoSettingsDialog,
+)
 from .icons import (
     icon_exit_fullscreen,
     icon_fullscreen,
@@ -39,9 +45,11 @@ from .menus import create_main_context_menu, create_playlist_context_menu
 from ..i18n import tr
 from ..mpv_power_config import ensure_mpv_power_user_layout
 from ..settings import (
+    load_sub_delay_for_file,
     load_equalizer_settings,
     load_sub_settings,
     load_video_settings,
+    save_sub_delay_for_file,
     save_restore_session_on_startup,
     save_aspect_ratio,
     save_language_setting,
@@ -697,6 +705,50 @@ class UIEventsMixin:
 
     def open_video_settings(self):
         dialog = VideoSettingsDialog(self, self)
+        self._exec_modal(dialog)
+
+    def open_opensubtitles_settings_dialog(self):
+        dialog = OpenSubtitlesSettingsDialog(self)
+        self._exec_modal(dialog)
+
+    def _current_media_source(self) -> str:
+        if hasattr(self, "get_current_media_source"):
+            try:
+                return str(self.get_current_media_source() or "")
+            except Exception:
+                return ""
+        if not self.playlist or not (0 <= self.current_index < len(self.playlist)):
+            return ""
+        return str(self.playlist[self.current_index] or "")
+
+    def _save_and_apply_downloaded_subtitle(
+        self,
+        subtitle_bytes: bytes,
+        _remote_filename: str = "",
+        language: str = "",
+        label: str = "",
+    ):
+        try:
+            if hasattr(self, "save_and_apply_subtitle_bytes"):
+                target_path = self.save_and_apply_subtitle_bytes(
+                    subtitle_bytes,
+                    _remote_filename,
+                    language=language,
+                    label=label,
+                )
+                self.show_status_overlay(tr("Subtitle applied: {}").format(Path(target_path).name))
+                return
+        except Exception as exc:
+            self.show_status_overlay(str(exc))
+            return
+
+    def open_opensubtitles_dialog(self):
+        media_source = self._current_media_source()
+        if not media_source:
+            self.show_status_overlay(tr("No media loaded"))
+            return
+        dialog = OpenSubtitlesDialog(media_source=media_source, parent=self)
+        dialog.subtitle_downloaded.connect(self._save_and_apply_downloaded_subtitle)
         self._exec_modal(dialog)
 
     def open_equalizer_dialog(self):
@@ -1462,6 +1514,13 @@ class UIEventsMixin:
 
     def apply_subtitle_settings(self):
         config = load_sub_settings()
+        current_file = ""
+        if hasattr(self, "get_current_media_source"):
+            try:
+                current_file = str(self.get_current_media_source() or "")
+            except Exception:
+                current_file = ""
+        delay_val = load_sub_delay_for_file(current_file, float(config.get("delay", 0.0)))
         style = str(config.get("back_style", "Shadow"))
         if style not in {"None", "Shadow", "Outline", "Opaque Box"}:
             style = "Shadow"
@@ -1503,7 +1562,7 @@ class UIEventsMixin:
         _safe_set("sub_scale", max(0.2, min(5.0, float(font_size) / 55.0)), "sub-scale")
         _safe_set("sub_color", color_value, "sub-color")
         _safe_set("sub_pos", int(config.get("pos", 100)), "sub-pos")
-        _safe_set("sub_delay", float(config.get("delay", 0.0)), "sub-delay")
+        _safe_set("sub_delay", float(delay_val), "sub-delay")
 
         _safe_set("sub_border_style", "outline-and-shadow", "sub-border-style")
         _safe_set("sub_border_size", 0, "sub-border-size")
@@ -1609,10 +1668,20 @@ class UIEventsMixin:
                 {
                     "font_size": int(font_size if font_size is not None else config.get("font_size", 55)),
                     "pos": int(sub_pos if sub_pos is not None else config.get("pos", 100)),
-                    "delay": float(sub_delay if sub_delay is not None else config.get("delay", 0.0)),
                 }
             )
             save_sub_settings(config)
+            current_file = ""
+            if hasattr(self, "get_current_media_source"):
+                try:
+                    current_file = str(self.get_current_media_source() or "")
+                except Exception:
+                    current_file = ""
+            if current_file:
+                save_sub_delay_for_file(
+                    current_file,
+                    float(sub_delay if sub_delay is not None else config.get("delay", 0.0)),
+                )
         except (RuntimeError, TypeError, ValueError) as e:
             logging.debug("Failed to persist runtime subtitle settings: %s", e)
 
@@ -2303,7 +2372,7 @@ class UIEventsMixin:
         if key == Qt.Key_M:
             self.toggle_mute()
             return True
-        if key == Qt.Key_S:
+        if key == Qt.Key_S and not (event.modifiers() & Qt.ShiftModifier):
             self.screenshot_save_as()
             return True
         if key == Qt.Key_P:
@@ -2443,6 +2512,9 @@ class UIEventsMixin:
         return False
 
     def _handle_subtitle_runtime_shortcuts(self, key, mods) -> bool:
+        if key == Qt.Key_S and (mods & Qt.ShiftModifier):
+            self.open_opensubtitles_dialog()
+            return True
         if key == Qt.Key_G:
             self.player.sub_delay -= 0.1
             self._persist_runtime_subtitle_settings()

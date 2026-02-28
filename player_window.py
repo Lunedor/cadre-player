@@ -81,7 +81,9 @@ from .ui.widgets import (
 
 from .utils import (
     format_duration,
+    get_user_data_dir,
     is_stream_url as _is_stream_url,
+    media_basename_from_source,
 )
 from .playlist import (
     PlaylistViewMixin,
@@ -980,6 +982,100 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         layout.addLayout(controls)
         self.update_mode_buttons()
 
+    def get_current_media_source(self) -> str:
+        if not self.playlist or not (0 <= self.current_index < len(self.playlist)):
+            return ""
+        return str(self.playlist[self.current_index] or "")
+
+    def _saved_subtitle_path_for_media(self, media_source: str) -> Path:
+        base_name = media_basename_from_source(media_source)
+        out_dir = get_user_data_dir() / "subtitles"
+        return out_dir / f"{base_name}.srt"
+
+    def _subtitle_track_exists(self, subtitle_path: str) -> bool:
+        try:
+            tracks = self.player.track_list or []
+        except Exception:
+            return False
+        check = str(subtitle_path).lower()
+        for track in tracks:
+            if not isinstance(track, dict):
+                continue
+            if str(track.get("type", "")).lower() != "sub":
+                continue
+            external = str(
+                track.get("external-filename")
+                or track.get("external_filename")
+                or track.get("demux-filename")
+                or ""
+            ).lower()
+            if external and external == check:
+                return True
+        return False
+
+    def _load_saved_subtitle_for_media(self, media_source: str, load_token: int) -> None:
+        if self._is_shutting_down or load_token != self._playback_load_token:
+            return
+        if not media_source or self.current_index < 0 or self.current_index >= len(self.playlist):
+            return
+        if str(self.playlist[self.current_index]) != str(media_source):
+            return
+        subtitle_path = self._saved_subtitle_path_for_media(media_source)
+        if not subtitle_path.exists():
+            return
+        subtitle_str = str(subtitle_path.resolve())
+        if self._subtitle_track_exists(subtitle_str):
+            return
+        try:
+            lang = ""
+            suffix = subtitle_path.stem.rsplit(".", 1)[-1].strip().lower()
+            if len(suffix) == 2 and suffix.isalpha():
+                lang = suffix
+            self.player.command("sub-add", subtitle_str, "select", f"Saved Subtitle ({lang or 'ext'})", lang)
+        except Exception:
+            try:
+                self.player.sub_add(subtitle_str)
+            except Exception:
+                pass
+
+    def _settle_resize_after_load(self, load_token: int) -> None:
+        if self._is_shutting_down or load_token != self._playback_load_token:
+            return
+        if self.current_index < 0:
+            return
+        try:
+            self.sync_size()
+        except Exception:
+            pass
+
+    def save_and_apply_subtitle_bytes(
+        self,
+        subtitle_bytes: bytes,
+        _remote_filename: str = "",
+        language: str = "",
+        label: str = "",
+    ) -> str:
+        media_source = self.get_current_media_source()
+        if not media_source:
+            raise RuntimeError("No active media source.")
+        if not subtitle_bytes:
+            raise RuntimeError("Subtitle payload is empty.")
+
+        target_path = self._saved_subtitle_path_for_media(media_source)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with target_path.open("wb") as handle:
+            handle.write(subtitle_bytes)
+
+        subtitle_path = str(target_path.resolve())
+        sub_title = str(label or "").strip() or f"OpenSubtitles ({(language or 'ext').strip().lower() or 'ext'})"
+        lang = str(language or "").strip().lower()
+        try:
+            self.player.command("sub-add", subtitle_path, "select", sub_title, lang)
+        except Exception:
+            self.player.sub_add(subtitle_path)
+        return str(target_path)
+
     def closeEvent(self, event):
         if self._is_shutting_down:
             event.accept()
@@ -1279,10 +1375,17 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 240,
                 lambda t=load_token, p=str(current_file), pos=resume_pos: self._safe_resume_seek(t, p, pos, 0),
             )
+        QTimer.singleShot(
+            460,
+            lambda t=load_token, p=str(current_file): self._load_saved_subtitle_for_media(p, t),
+        )
         # Chapter metadata can arrive late for some formats/streams.
         QTimer.singleShot(1450, lambda t=load_token: self._refresh_chapter_markers(t))
         QTimer.singleShot(2300, lambda t=load_token: self._refresh_chapter_markers(t))
         QTimer.singleShot(3300, lambda t=load_token: self._refresh_chapter_markers(t))
+        # Late size settle helps avoid slight post-open dimension drift on some codecs/streams.
+        QTimer.singleShot(900, lambda t=load_token: self._settle_resize_after_load(t))
+        QTimer.singleShot(1600, lambda t=load_token: self._settle_resize_after_load(t))
 
     def play_current(self):
         if self._full_duration_scan_active:

@@ -16,6 +16,9 @@ STREAM_AUTH_USERNAME_KEY = "network/stream_auth_username"
 STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
 STREAM_QUALITY_KEY = "network/stream_quality"
 SESSION_RESTORE_ON_STARTUP_KEY = "player/restore_session_on_startup"
+OS_USERNAME_KEY = "opensubtitles/os_username"
+OS_PASSWORD_KEY = "opensubtitles/os_password"
+OS_DEFAULT_LANG_KEY = "opensubtitles/os_default_lang"
 
 def _to_int(value, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
     try:
@@ -122,6 +125,7 @@ SUB_DELAY_KEY = "sub/delay"
 SUB_BACK_STYLE_KEY = "sub/back_style"
 ASPECT_RATIO_KEY = "video/aspect_ratio"
 RESUME_POS_PREFIX = "resume/"
+SUB_DELAY_PER_FILE_PREFIX = "sub_delay/"
 PIN_CONTROLS_KEY = "player/pin_controls"
 PIN_PLAYLIST_KEY = "player/pin_playlist"
 
@@ -263,6 +267,25 @@ def load_resume_position(file_path: str) -> float:
         return 0.0
 
 
+def save_sub_delay_for_file(file_path: str, seconds: float) -> None:
+    if not file_path:
+        return
+    settings = get_settings()
+    settings.setValue(f"{SUB_DELAY_PER_FILE_PREFIX}{file_path}", float(seconds))
+    settings.sync()
+
+
+def load_sub_delay_for_file(file_path: str, default: float = 0.0) -> float:
+    if not file_path:
+        return float(default)
+    settings = get_settings()
+    val = settings.value(f"{SUB_DELAY_PER_FILE_PREFIX}{file_path}", float(default))
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return float(default)
+
+
 def load_language_setting(default: str = "") -> str:
     """Loads saved language code, returns empty string if none (auto-detect)."""
     settings = get_settings()
@@ -350,4 +373,28 @@ def load_restore_session_on_startup(default: bool = False) -> bool:
 def save_restore_session_on_startup(value: bool):
     settings = get_settings()
     settings.setValue(SESSION_RESTORE_ON_STARTUP_KEY, bool(value))
+    settings.sync()
+
+
+def load_opensubtitles_settings():
+    settings = get_settings()
+    default_lang = str(settings.value(OS_DEFAULT_LANG_KEY, "en") or "en").strip().lower()
+    if not default_lang:
+        default_lang = "en"
+    return {
+        "os_username": str(settings.value(OS_USERNAME_KEY, "")),
+        "os_password": str(settings.value(OS_PASSWORD_KEY, "")),
+        "os_default_lang": default_lang,
+    }
+
+
+def save_opensubtitles_settings(config: dict):
+    settings = get_settings()
+    if "os_username" in config:
+        settings.setValue(OS_USERNAME_KEY, str(config["os_username"] or ""))
+    if "os_password" in config:
+        settings.setValue(OS_PASSWORD_KEY, str(config["os_password"] or ""))
+    if "os_default_lang" in config:
+        default_lang = str(config["os_default_lang"] or "en").strip().lower() or "en"
+        settings.setValue(OS_DEFAULT_LANG_KEY, default_lang)
     settings.sync()
