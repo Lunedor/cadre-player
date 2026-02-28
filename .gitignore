@@ -20,6 +20,7 @@ wheels/
 releases/
 scripts/
 scripts-opt/
+subtitles/
 *.egg-info/
 .installed.cfg
 *.egg
