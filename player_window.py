@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from .settings import (
+    load_import_include_audio,
     load_muted,
     load_repeat,
     load_restore_session_on_startup,
@@ -120,6 +121,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.scanners = []
         self.playlist_titles = {} # path/url -> display title
         self.stream_quality = load_stream_quality("best")
+        self.include_audio_in_imports = load_import_include_audio(True)
 
         self._playlist_refresh_lock = False
         self._pending_auto_next = False

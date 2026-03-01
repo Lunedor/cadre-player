@@ -43,34 +43,6 @@ def create_main_context_menu(player, pos):
             action.setChecked(True)
         action.triggered.connect(lambda checked, s=speed: player.set_playback_speed(s))
 
-    # Audio Options
-    audio_options_menu = menu.addMenu(tr("Audio Options"))
-    mute_action = audio_options_menu.addAction(tr("Mute / Unmute") + "\tM")
-    mute_action.triggered.connect(player.toggle_mute)
-    audio_options_menu.addSeparator()
-
-    # Audio Tracks
-    tracks = []
-    try:
-        tracks = player.player.track_list
-    except Exception as e:
-        logging.debug("Could not read mpv track list for menu: %s", e)
-    
-    audio_tracks = [t for t in tracks if t['type'] == 'audio']
-    audio_menu = audio_options_menu.addMenu(tr("Audio Tracks"))
-    if len(audio_tracks) <= 1:
-        audio_menu.setEnabled(False)
-    else:
-        for t in audio_tracks:
-            title = t.get('title') or t.get('lang') or f"Track {t['id']}"
-            action = audio_menu.addAction(title)
-            action.setCheckable(True)
-            if t['selected']: action.setChecked(True)
-            action.triggered.connect(lambda checked, tid=t['id']: player.select_audio_track(tid))
-
-    eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
-    eq_action.triggered.connect(player.open_equalizer_dialog)
-
     quality_menu = playback_settings_menu.addMenu(tr("Video Quality"))
     quality_options = player.get_stream_quality_menu_options()
     if not quality_options:
@@ -115,9 +87,47 @@ def create_main_context_menu(player, pos):
     mirror_v.setCheckable(True)
     mirror_v.setChecked(bool(getattr(player, "_video_mirror_vertical", False)))
     mirror_v.triggered.connect(player.toggle_mirror_vertical)
+    
+    include_audio_action = playback_settings_menu.addAction(tr("Include Audio in Imports"))
+    include_audio_action.setCheckable(True)
+    include_audio_action.setChecked(bool(getattr(player, "include_audio_in_imports", True)))
+    include_audio_action.triggered.connect(player.toggle_include_audio_in_imports)
+
+    restore_on_startup_action = playback_settings_menu.addAction(tr("Restore Session on Startup"))
+    restore_on_startup_action.setCheckable(True)
+    restore_on_startup_action.setChecked(bool(getattr(player, "restore_session_on_startup", False)))
+    restore_on_startup_action.triggered.connect(player.toggle_restore_session_on_startup)
 
     screenshot_action = playback_settings_menu.addAction(tr("Screenshot") + "\tS")
     screenshot_action.triggered.connect(player.screenshot_save_as)
+
+    # Audio Options
+    audio_options_menu = menu.addMenu(tr("Audio Options"))
+    mute_action = audio_options_menu.addAction(tr("Mute / Unmute") + "\tM")
+    mute_action.triggered.connect(player.toggle_mute)
+    audio_options_menu.addSeparator()
+
+    # Audio Tracks
+    tracks = []
+    try:
+        tracks = player.player.track_list
+    except Exception as e:
+        logging.debug("Could not read mpv track list for menu: %s", e)
+    
+    audio_tracks = [t for t in tracks if t['type'] == 'audio']
+    audio_menu = audio_options_menu.addMenu(tr("Audio Tracks"))
+    if len(audio_tracks) <= 1:
+        audio_menu.setEnabled(False)
+    else:
+        for t in audio_tracks:
+            title = t.get('title') or t.get('lang') or f"Track {t['id']}"
+            action = audio_menu.addAction(title)
+            action.setCheckable(True)
+            if t['selected']: action.setChecked(True)
+            action.triggered.connect(lambda checked, tid=t['id']: player.select_audio_track(tid))
+
+    eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
+    eq_action.triggered.connect(player.open_equalizer_dialog)
 
     # Subtitle Options
     subtitle_options_menu = menu.addMenu(tr("Subtitle Options"))
@@ -193,11 +203,6 @@ def create_main_context_menu(player, pos):
     ontop_action.setCheckable(True)
     ontop_action.setChecked(player.always_on_top)
     ontop_action.triggered.connect(player.toggle_always_on_top)
-
-    restore_on_startup_action = view_menu.addAction(tr("Restore Session on Startup"))
-    restore_on_startup_action.setCheckable(True)
-    restore_on_startup_action.setChecked(bool(getattr(player, "restore_session_on_startup", False)))
-    restore_on_startup_action.triggered.connect(player.toggle_restore_session_on_startup)
 
     menu.addSeparator()
 

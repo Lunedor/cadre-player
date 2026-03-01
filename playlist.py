@@ -805,23 +805,42 @@ class PlaylistPrepareWorker(QThread):
     finished_paths = Signal(list)
     progress_count = Signal(int)
 
-    def __init__(self, raw_paths, existing_keys, recursive=False, use_collect=False):
+    def __init__(
+        self,
+        raw_paths,
+        existing_keys,
+        recursive=False,
+        use_collect=False,
+        include_audio: bool = True,
+    ):
         super().__init__()
         self.raw_paths = list(raw_paths)
         self.existing_keys = set(existing_keys)
         self.recursive = recursive
         self.use_collect = use_collect
+        self.include_audio = bool(include_audio)
 
     def run(self):
         if self.use_collect:
             candidates = collect_paths(
                 [Path(p) for p in self.raw_paths],
                 recursive=self.recursive,
+                include_audio=self.include_audio,
                 progress_cb=self.progress_count.emit,
                 progress_step=100,
             )
         else:
-            candidates = [str(p) for p in self.raw_paths]
+            candidates = []
+            for raw in self.raw_paths:
+                candidate = str(raw or "").strip()
+                if not candidate:
+                    continue
+                if _is_stream_url(candidate):
+                    candidates.append(candidate)
+                    continue
+                p = Path(candidate)
+                if p.is_file() and is_media_file(p, include_audio=self.include_audio):
+                    candidates.append(str(p.resolve()))
 
         unique_paths = []
         seen = set(self.existing_keys)
@@ -841,6 +860,9 @@ class PlaylistPrepareWorker(QThread):
 
 
 class PlaylistViewMixin:
+    def _include_audio_in_imports(self) -> bool:
+        return bool(getattr(self, "include_audio_in_imports", True))
+
     def _clear_playlist_before_import(self):
         old_paths = list(self.playlist)
         self.stop_playback()
@@ -951,7 +973,7 @@ class PlaylistViewMixin:
                     subtitle_files.append(str(p.resolve()))
                 elif _looks_like_m3u_path(str(p)):
                     local_m3u_files.append(p)
-                elif is_media_file(p):
+                elif is_media_file(p, include_audio=self._include_audio_in_imports()):
                     media_files.append(str(p.resolve()))
             elif p.is_dir():
                 folders.append(p)
@@ -1015,7 +1037,11 @@ class PlaylistViewMixin:
         return is_audio_file(path)
 
     def collect_paths(self, paths, recursive: bool = False):
-        return collect_paths(paths, recursive=recursive)
+        return collect_paths(
+            paths,
+            recursive=recursive,
+            include_audio=self._include_audio_in_imports(),
+        )
 
     def load_startup_paths(self, raw_paths):
         paths = [Path(p) for p in raw_paths if p]
@@ -1052,7 +1078,10 @@ class PlaylistViewMixin:
         sel_str = os.path.normpath(str(selected))
         sel_lower = sel_str.lower()
 
-        siblings = list_folder_media(selected.parent)
+        siblings = list_folder_media(
+            selected.parent,
+            include_audio=self._include_audio_in_imports(),
+        )
         try:
             match_idx = next(
                 i for i, s in enumerate(siblings) if os.path.normpath(s).lower() == sel_lower
@@ -1141,6 +1170,7 @@ class PlaylistViewMixin:
             existing_keys,
             recursive=req["recursive"],
             use_collect=req["use_collect"],
+            include_audio=self._include_audio_in_imports(),
         )
         self._start_import_progress(0)
         worker.progress_count.connect(self._on_prepare_worker_progress)
@@ -1456,17 +1486,25 @@ class PlaylistViewMixin:
         self._start_next_url_worker()
 
     def add_files_dialog(self):
-        filter_str = (
-            tr("Media Files ({})").format(
-                " ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS)
+        include_audio = self._include_audio_in_imports()
+        if include_audio:
+            filter_str = (
+                tr("Media Files ({})").format(
+                    " ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS)
+                )
+                + ";;"
+                + tr("Video Files ({})").format(" ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS))
+                + ";;"
+                + tr("Audio Files ({})").format(" ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS))
+                + ";;"
+                + tr("All files (*.*)")
             )
-            + ";;"
-            + tr("Video Files ({})").format(" ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS))
-            + ";;"
-            + tr("Audio Files ({})").format(" ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS))
-            + ";;"
-            + tr("All files (*.*)")
-        )
+        else:
+            filter_str = (
+                tr("Video Files ({})").format(" ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS))
+                + ";;"
+                + tr("All files (*.*)")
+            )
         dialog = QFileDialog(self, tr("Select files to open"), "")
         dialog.setFileMode(QFileDialog.ExistingFiles)
         dialog.setNameFilter(filter_str)

@@ -49,6 +49,7 @@ from ..settings import (
     load_equalizer_settings,
     load_sub_settings,
     load_video_settings,
+    save_import_include_audio,
     save_sub_delay_for_file,
     save_restore_session_on_startup,
     save_aspect_ratio,
@@ -1059,6 +1060,15 @@ class UIEventsMixin:
         save_restore_session_on_startup(self.restore_session_on_startup)
         status = tr("On") if self.restore_session_on_startup else tr("Off")
         self.show_status_overlay(tr("Restore session on startup: {}").format(status))
+
+    def toggle_include_audio_in_imports(self, checked=None):
+        if checked is None:
+            self.include_audio_in_imports = not bool(getattr(self, "include_audio_in_imports", True))
+        else:
+            self.include_audio_in_imports = bool(checked)
+        save_import_include_audio(self.include_audio_in_imports)
+        status = tr("On") if self.include_audio_in_imports else tr("Off")
+        self.show_status_overlay(tr("Include audio files in imports: {}").format(status))
 
     def change_language(self, lang_code: str):
         save_language_setting(lang_code)

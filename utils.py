@@ -132,22 +132,18 @@ def _probe_is_media_file(path: Path) -> bool:
     return is_media
 
 
-def is_media_file(path: Path) -> bool:
+def is_media_file(path: Path, include_audio: bool = True) -> bool:
     ext = path.suffix.lower()
-    if ext in VIDEO_EXTENSION_SET or ext in AUDIO_EXTENSION_SET:
+    if ext in VIDEO_EXTENSION_SET:
         return True
-    if ext in NON_MEDIA_EXTENSION_SET:
-        return False
-    return _probe_is_media_file(path)
+    if ext in AUDIO_EXTENSION_SET:
+        return bool(include_audio)
+    return False
 
 
 def is_audio_file(path: Path) -> bool:
     ext = path.suffix.lower()
-    if ext in AUDIO_EXTENSION_SET:
-        return True
-    if ext in VIDEO_EXTENSION_SET or ext in NON_MEDIA_EXTENSION_SET:
-        return False
-    return _probe_is_media_file(path)
+    return ext in AUDIO_EXTENSION_SET
 SPEED_STEPS = (0.5, 0.75, 1.0, 1.5, 2.0)
 REPEAT_OFF = 0
 REPEAT_ONE = 1
@@ -635,13 +631,9 @@ def format_duration(seconds: float) -> str:
 
 def is_video_file(path: Path) -> bool:
     ext = path.suffix.lower()
-    if ext in VIDEO_EXTENSION_SET:
-        return True
-    if ext in AUDIO_EXTENSION_SET or ext in NON_MEDIA_EXTENSION_SET:
-        return False
-    return _probe_is_media_file(path)
+    return ext in VIDEO_EXTENSION_SET
 
-def list_folder_media(folder: Path, recursive: bool = False) -> list[str]:
+def list_folder_media(folder: Path, recursive: bool = False, include_audio: bool = True) -> list[str]:
     if not folder.exists() or not folder.is_dir():
         return []
     
@@ -652,19 +644,20 @@ def list_folder_media(folder: Path, recursive: bool = False) -> list[str]:
             filenames.sort(key=lambda f: f.lower())
             for filename in filenames:
                 full_path = Path(root) / filename
-                if is_media_file(full_path):
+                if is_media_file(full_path, include_audio=include_audio):
                     all_media.append(str(full_path.resolve()))
         return all_media
     else:
         return [
             str(item.resolve())
             for item in sorted(folder.iterdir(), key=lambda p: p.name.lower())
-            if item.is_file() and is_media_file(item)
+            if item.is_file() and is_media_file(item, include_audio=include_audio)
         ]
 
 def collect_paths(
     paths: list[Path],
     recursive: bool = False,
+    include_audio: bool = True,
     progress_cb=None,
     progress_step: int = 100,
 ) -> list[str]:
@@ -681,7 +674,7 @@ def collect_paths(
 
     for path in paths:
         resolved = path.resolve()
-        if resolved.is_file() and is_media_file(resolved):
+        if resolved.is_file() and is_media_file(resolved, include_audio=include_audio):
             files.append(str(resolved))
             pending_emit += 1
             maybe_emit()
@@ -692,13 +685,13 @@ def collect_paths(
                     filenames.sort(key=lambda f: f.lower())
                     for filename in filenames:
                         full_path = Path(root) / filename
-                        if is_media_file(full_path):
+                        if is_media_file(full_path, include_audio=include_audio):
                             files.append(str(full_path.resolve()))
                             pending_emit += 1
                             maybe_emit()
             else:
                 for item in sorted(resolved.iterdir(), key=lambda p: p.name.lower()):
-                    if item.is_file() and is_media_file(item):
+                    if item.is_file() and is_media_file(item, include_audio=include_audio):
                         files.append(str(item.resolve()))
                         pending_emit += 1
                         maybe_emit()

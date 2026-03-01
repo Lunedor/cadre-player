@@ -16,6 +16,7 @@ STREAM_AUTH_USERNAME_KEY = "network/stream_auth_username"
 STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
 STREAM_QUALITY_KEY = "network/stream_quality"
 SESSION_RESTORE_ON_STARTUP_KEY = "player/restore_session_on_startup"
+IMPORT_INCLUDE_AUDIO_KEY = "player/import_include_audio"
 OS_USERNAME_KEY = "opensubtitles/os_username"
 OS_PASSWORD_KEY = "opensubtitles/os_password"
 OS_DEFAULT_LANG_KEY = "opensubtitles/os_default_lang"
@@ -373,6 +374,17 @@ def load_restore_session_on_startup(default: bool = False) -> bool:
 def save_restore_session_on_startup(value: bool):
     settings = get_settings()
     settings.setValue(SESSION_RESTORE_ON_STARTUP_KEY, bool(value))
+    settings.sync()
+
+
+def load_import_include_audio(default: bool = True) -> bool:
+    settings = get_settings()
+    return settings.value(IMPORT_INCLUDE_AUDIO_KEY, default, type=bool)
+
+
+def save_import_include_audio(value: bool):
+    settings = get_settings()
+    settings.setValue(IMPORT_INCLUDE_AUDIO_KEY, bool(value))
     settings.sync()
 
 
