@@ -2334,6 +2334,49 @@ class UIEventsMixin:
         return False
 
     def _handle_transport_shortcuts(self, event, key) -> bool:
+        media_toggle = getattr(Qt, "Key_MediaTogglePlayPause", None)
+        media_play = getattr(Qt, "Key_MediaPlay", None)
+        media_pause = getattr(Qt, "Key_MediaPause", None)
+        media_next = getattr(Qt, "Key_MediaNext", None)
+        media_prev = getattr(Qt, "Key_MediaPrevious", None)
+        media_stop = getattr(Qt, "Key_MediaStop", None)
+
+        if media_toggle is not None and key == media_toggle:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("toggle")
+            else:
+                self.toggle_play()
+            return True
+        if media_play is not None and key == media_play:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("toggle")
+            else:
+                self.toggle_play()
+            return True
+        if media_pause is not None and key == media_pause:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("toggle")
+            else:
+                self.toggle_play()
+            return True
+        if media_next is not None and key == media_next:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("next")
+            else:
+                self.next_video()
+            return True
+        if media_prev is not None and key == media_prev:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("previous")
+            else:
+                self.prev_video()
+            return True
+        if media_stop is not None and key == media_stop:
+            if hasattr(self, "_handle_external_media_action"):
+                self._handle_external_media_action("stop")
+            else:
+                self.stop_playback()
+            return True
         if key == Qt.Key_Right:
             self.seek_relative(5)
             return True

@@ -51,6 +51,7 @@ It is focused on:
 - Resume position per item
 - Playlist save/load
 - Runtime diagnostics logging (`logs.txt`)
+- Windows external media control support (hardware media keys and common remote apps)
 
 ## Requirements
 

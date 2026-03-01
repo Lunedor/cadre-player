@@ -4,15 +4,18 @@ import subprocess
 import logging
 import hashlib
 import tempfile
+import ctypes
+from ctypes import wintypes
 from collections import deque
 import threading
+import weakref
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 import time
 
 import mpv
 
-from PySide6.QtCore import QTimer, Qt, Signal, QPoint
+from PySide6.QtCore import QTimer, Qt, Signal, QPoint, QAbstractNativeEventFilter
 from PySide6.QtGui import QCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -95,6 +98,36 @@ from .playlist import (
 from .logic import PlayerLogic
 from .mpv_power_config import ensure_mpv_power_user_layout, load_mpv_video_overrides
 
+WM_APPCOMMAND = 0x0319
+APPCOMMAND_MEDIA_NEXTTRACK = 11
+APPCOMMAND_MEDIA_PREVIOUSTRACK = 12
+APPCOMMAND_MEDIA_STOP = 13
+APPCOMMAND_MEDIA_PLAY_PAUSE = 14
+APPCOMMAND_MEDIA_PLAY = 46
+APPCOMMAND_MEDIA_PAUSE = 47
+
+
+
+class _WindowsMediaNativeEventFilter(QAbstractNativeEventFilter):
+    def __init__(self, player):
+        super().__init__()
+        self._player_ref = weakref.ref(player)
+
+    def nativeEventFilter(self, eventType, message):
+        player = self._player_ref()
+        if player is None or sys.platform != "win32":
+            return False
+        try:
+            msg_ptr = int(message)
+            if not msg_ptr:
+                return False
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
+            if msg.message != WM_APPCOMMAND:
+                return False
+            app_command = (int(msg.lParam) >> 16) & 0x7FF
+            return bool(player._handle_windows_appcommand(app_command))
+        except Exception:
+            return False
 
 
 class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixin):
@@ -383,6 +416,16 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._is_resizing = False # Add this
         self._context_menu_open = False
         self._fullscreen_transition_active = False
+        self._last_media_command = None
+        self._last_media_command_at = 0.0
+        self._last_media_action = ""
+        self._last_media_action_at = 0.0
+        self._native_media_event_filter = None
+        if sys.platform == "win32":
+            app = QApplication.instance()
+            if app is not None:
+                self._native_media_event_filter = _WindowsMediaNativeEventFilter(self)
+                app.installNativeEventFilter(self._native_media_event_filter)
 
     # Explicit UI-event overrides to ensure Qt dispatch reaches UIEventsMixin.
     def eventFilter(self, obj, event):
@@ -405,6 +448,71 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
     def keyPressEvent(self, event):
         return UIEventsMixin.keyPressEvent(self, event)
+
+    def _handle_windows_appcommand(self, app_command: int) -> bool:
+        now = time.monotonic()
+        if (
+            self._last_media_command == app_command
+            and (now - self._last_media_command_at) < 0.08
+        ):
+            return True
+        self._last_media_command = app_command
+        self._last_media_command_at = now
+
+        if app_command == APPCOMMAND_MEDIA_PLAY_PAUSE:
+            return self._handle_external_media_action("toggle")
+        if app_command == APPCOMMAND_MEDIA_PLAY:
+            return self._handle_external_media_action("toggle")
+        if app_command == APPCOMMAND_MEDIA_PAUSE:
+            return self._handle_external_media_action("toggle")
+        if app_command == APPCOMMAND_MEDIA_NEXTTRACK:
+            return self._handle_external_media_action("next")
+        if app_command == APPCOMMAND_MEDIA_PREVIOUSTRACK:
+            return self._handle_external_media_action("previous")
+        if app_command == APPCOMMAND_MEDIA_STOP:
+            return self._handle_external_media_action("stop")
+        return False
+
+    def _handle_external_media_action(self, action: str) -> bool:
+        now = time.monotonic()
+        action_key = str(action or "").strip().lower()
+        if not action_key:
+            return False
+        if (
+            self._last_media_action == action_key
+            and (now - self._last_media_action_at) < 0.18
+        ):
+            return True
+        self._last_media_action = action_key
+        self._last_media_action_at = now
+
+        if action_key in ("toggle", "play", "pause"):
+            self.toggle_play()
+            return True
+        if action_key == "next":
+            self.next_video()
+            return True
+        if action_key in ("previous", "prev"):
+            self.prev_video()
+            return True
+        if action_key == "stop":
+            self.stop_playback()
+            return True
+        return False
+
+    def nativeEvent(self, eventType, message):
+        if sys.platform == "win32":
+            try:
+                msg_ptr = int(message)
+                if msg_ptr:
+                    msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
+                    if msg.message == WM_APPCOMMAND:
+                        app_command = (int(msg.lParam) >> 16) & 0x7FF
+                        if self._handle_windows_appcommand(app_command):
+                            return True, 0
+            except Exception:
+                pass
+        return QMainWindow.nativeEvent(self, eventType, message)
 
     def resizeEvent(self, event):
         return UIEventsMixin.resizeEvent(self, event)
