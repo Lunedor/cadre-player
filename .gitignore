@@ -21,6 +21,7 @@ releases/
 scripts/
 scripts-opt/
 subtitles/
+tools/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -29,6 +30,8 @@ subtitles/
 venv/
 .venv/
 ENV/
+.env
+.env.*
 
 # OS/IDE
 .vscode/
@@ -37,6 +40,15 @@ ENV/
 *.swo
 .DS_Store
 Thumbs.db
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
 
 # Project Specific
 *.dll
@@ -53,6 +65,7 @@ logs.txt
 settings.ini
 py_video/settings.json
 py_video/resume_info.json
+/python
 
 # Binaries (Usually not in repo)
 *.exe
