@@ -272,6 +272,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._seek_thumb_cache_max_items = 220
         self._seek_thumb_temp_dir = Path(tempfile.gettempdir()) / "cadre-player-thumbnails"
         self._seek_thumb_temp_dir.mkdir(parents=True, exist_ok=True)
+        self._clear_seek_thumbnail_temp_dir()
         self._ffmpeg_probe_done = False
         self._ffmpeg_available = False
 
@@ -773,9 +774,33 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._seek_thumb_cache[key] = image_path
         while len(self._seek_thumb_cache) > int(self._seek_thumb_cache_max_items):
             try:
-                self._seek_thumb_cache.pop(next(iter(self._seek_thumb_cache)))
+                oldest_key = next(iter(self._seek_thumb_cache))
+                dropped_path = self._seek_thumb_cache.pop(oldest_key, None)
+                self._delete_seek_thumbnail_file(dropped_path)
             except StopIteration:
                 break
+
+    def _delete_seek_thumbnail_file(self, image_path: str | None):
+        if not image_path:
+            return
+        try:
+            path = Path(image_path)
+            if path.exists() and path.is_file():
+                path.unlink()
+        except Exception:
+            pass
+
+    def _clear_seek_thumbnail_temp_dir(self):
+        try:
+            if not self._seek_thumb_temp_dir.exists():
+                return
+            for image in self._seek_thumb_temp_dir.glob("*.jpg"):
+                try:
+                    image.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _nearest_cached_seek_thumbnail(self, media_path: str, snapped_sec: int, max_distance: int = 24) -> str | None:
         target_path = str(media_path)
@@ -1228,6 +1253,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._stop_import_progress()
         self._stop_url_resolve_status()
         self._shutdown_background_workers()
+        self._clear_seek_thumbnail_temp_dir()
 
         # Explicitly close and delete all overlay windows
         for attr in ["overlay", "speed_overlay", "playlist_overlay", "title_bar"]:
