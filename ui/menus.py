@@ -44,15 +44,21 @@ def create_main_context_menu(player, pos):
         action.triggered.connect(lambda checked, s=speed: player.set_playback_speed(s))
 
     quality_menu = playback_settings_menu.addMenu(tr("Video Quality"))
-    quality_options = player.get_stream_quality_menu_options()
-    if not quality_options:
-        quality_menu.setEnabled(False)
-    else:
+
+    def _populate_quality_menu():
+        quality_menu.clear()
+        quality_options = player.get_stream_quality_menu_options()
+        if not quality_options:
+            unavailable_action = quality_menu.addAction(tr("No quality options available"))
+            unavailable_action.setEnabled(False)
+            return
         for value, label, is_current in quality_options:
             q_act = quality_menu.addAction(label)
             q_act.setCheckable(True)
             q_act.setChecked(is_current)
             q_act.triggered.connect(lambda checked, q=value: player.set_stream_quality(q))
+
+    quality_menu.aboutToShow.connect(_populate_quality_menu)
     # Aspect Ratio
     aspect_menu = playback_settings_menu.addMenu(tr("Aspect Ratio"))
     current_ar = load_aspect_ratio()

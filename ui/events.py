@@ -1825,11 +1825,16 @@ class UIEventsMixin:
         self._cache_stream_quality_values(key, dedup)
         return dedup
 
-    def get_stream_quality_menu_options(self):
+    def get_stream_quality_menu_options(self, cached_only: bool = False):
         if not (0 <= self.current_index < len(self.playlist)):
             return []
         current_item = str(self.playlist[self.current_index])
-        values = self._resolve_quality_options_for_url(current_item)
+        values: list[tuple[str, str]] = []
+        if cached_only:
+            key = current_item.casefold()
+            values = list(self._stream_quality_cache.get(key, []))
+        else:
+            values = self._resolve_quality_options_for_url(current_item)
         if not values:
             return []
         options = []
