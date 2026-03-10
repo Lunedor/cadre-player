@@ -717,4 +717,5 @@ def delete_to_trash(path: str) -> bool:
         send2trash(path)
         return True
     except Exception:
+        logging.exception("Failed to move file to recycle bin: %s", path)
         return False

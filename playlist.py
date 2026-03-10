@@ -1048,7 +1048,8 @@ class PlaylistViewMixin:
         paths = [p for p in paths if p.exists()]
         if not paths:
             if not raw_paths:
-                self.restore_session_playlist(silent_if_missing=True)
+                if getattr(self, "restore_session_on_startup", False):
+                    self.restore_session_playlist(silent_if_missing=True)
             return
 
         if len(paths) == 1 and paths[0].is_file() and self.is_video_file(paths[0]):
