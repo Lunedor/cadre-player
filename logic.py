@@ -71,31 +71,29 @@ class PlayerLogic:
         if self._full_duration_scan_active:
             self.show_status_overlay(tr("Duration scan is running (F4 to cancel)"))
             return
-        if not self._can_switch_track_now(manual=manual):
-            return
         next_index = self.get_adjacent_index(forward=False)
         if next_index is None:
             return
-        self.save_current_resume_info()
-        self._user_paused = False
-        self.current_index = next_index
-        self._schedule_play_current(self._manual_switch_delay_ms if manual else 0)
-        self.show_status_overlay(tr("Previous"))
-        logging.info("Prev video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
+        switched = self._switch_to_playlist_index(
+            next_index,
+            manual=manual,
+            status_message=tr("Previous"),
+        )
+        if switched:
+            logging.info("Prev video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
 
     def next_video(self, manual: bool = True):
         if self._full_duration_scan_active:
             self.show_status_overlay(tr("Duration scan is running (F4 to cancel)"))
             return False
-        if not self._can_switch_track_now(manual=manual):
-            return False
         next_index = self.get_adjacent_index(forward=True)
         if next_index is None:
             return False
-        self.save_current_resume_info()
-        self._user_paused = False
-        self.current_index = next_index
-        self._schedule_play_current(self._manual_switch_delay_ms if manual else 0)
-        self.show_status_overlay(tr("Next"))
-        logging.info("Next video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
-        return True
+        switched = self._switch_to_playlist_index(
+            next_index,
+            manual=manual,
+            status_message=tr("Next"),
+        )
+        if switched:
+            logging.info("Next video: current_index=%d playlist=%d", self.current_index, len(self.playlist))
+        return bool(switched)

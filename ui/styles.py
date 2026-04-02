@@ -55,7 +55,7 @@ QSlider::handle:horizontal {
 PLAYLIST_STYLE = COMMON_BUTTON_STYLE + """
 QWidget#PlaylistPanel {
   background: rgba(20, 20, 20, 0.98);
-  border: 1px solid rgba(255,255,255,25);
+  border: 1px solid rgba(255,255,255,20);
   border-radius: 12px;
 }
 
@@ -72,7 +72,7 @@ QListView {
 
 QLineEdit {
   background: rgba(255,255,255,10);
-  border: 1px solid rgba(255,255,255,24);
+  border: 1px solid rgba(255,255,255,20);
   border-radius: 8px;
   color: rgba(255,255,255,230);
   padding: 4px 8px;
@@ -94,14 +94,14 @@ QScrollBar:vertical {
 }
 
 QScrollBar::handle:vertical {
-  background: rgba(255, 255, 255, 40);
+  background: rgba(255, 255, 255, 34);
   min-height: 30px;
   border-radius: 4px;
   margin: 0px 2px;
 }
 
 QScrollBar::handle:vertical:hover {
-  background: rgba(255, 255, 255, 45);
+  background: rgba(255, 255, 255, 40);
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {

@@ -304,6 +304,18 @@ class UIEventsMixin:
         pos = self.mapToGlobal(QPoint(0, 0))
         self.title_bar.setGeometry(pos.x(), pos.y(), width, height)
 
+    def _should_show_title_bar(self, local_pos: QPoint) -> bool:
+        if not hasattr(self, "title_bar"):
+            return False
+        if self._context_menu_open or not self._is_app_focused():
+            return False
+        if self.current_index < 0:
+            return True
+        if not self.rect().contains(local_pos):
+            return False
+        threshold = 48 if self.isFullScreen() else 60
+        return local_pos.y() < threshold
+
     def _is_app_focused(self) -> bool:
         if self.isMinimized():
             return False
@@ -412,8 +424,16 @@ class UIEventsMixin:
             except RuntimeError:
                 pass
 
+    def _set_mouse_poll_interval(self, interval_ms: int) -> None:
+        if not hasattr(self, "mouse_timer"):
+            return
+        target = max(50, int(interval_ms))
+        if self.mouse_timer.interval() != target:
+            self.mouse_timer.setInterval(target)
+
     def check_mouse_pos(self):
         if self.isMinimized():
+            self._set_mouse_poll_interval(getattr(self, "_mouse_timer_slow_interval", 180))
             for attr in ("title_bar", "overlay", "playlist_overlay", "speed_overlay"):
                 win = getattr(self, attr, None)
                 if win and win.isVisible():
@@ -422,17 +442,21 @@ class UIEventsMixin:
                 self.resize_corner_hint.hide()
             return
         if not self._is_app_focused():
+            self._set_mouse_poll_interval(getattr(self, "_mouse_timer_slow_interval", 180))
             if hasattr(self, "title_bar") and self.title_bar.isVisible():
                 self.title_bar.hide()
             if hasattr(self, "resize_corner_hint"):
                 self.resize_corner_hint.hide()
             return
         if getattr(self, "_fullscreen_transition_active", False):
+            self._set_mouse_poll_interval(getattr(self, "_mouse_timer_fast_interval", 100))
             return
 
         global_pos = QCursor.pos()
         local_pos = self.mapFromGlobal(global_pos)
         volume_popup_active = hasattr(self, "volume_popup") and self.volume_popup.isVisible()
+        poll_step = self.mouse_timer.interval() if hasattr(self, "mouse_timer") else 100
+        cursor_moved = global_pos != self.last_cursor_global_pos
 
         margin = 20
         in_resize_area = (
@@ -461,7 +485,7 @@ class UIEventsMixin:
                     self.resize_corner_hint.hide()
             else:
                 if self.rect().contains(local_pos):
-                    self.cursor_idle_time += 100
+                    self.cursor_idle_time += poll_step
                     if self.cursor_idle_time >= 2500:
                         if self.cursor().shape() != Qt.BlankCursor:
                             self.setCursor(Qt.BlankCursor)
@@ -518,6 +542,9 @@ class UIEventsMixin:
                 QTimer.singleShot(1, self.playlist_widget.update)
 
         if self.playlist_overlay.isVisible() and not self.pinned_playlist:
+            if getattr(self, "_playlist_drag_reveal_active", False):
+                self.playlist_auto_hide_timer.stop()
+                return
             playlist_rect = self.playlist_overlay.geometry()
             if global_pos.x() > (playlist_rect.x() - 40):
                 self.playlist_auto_hide_timer.stop()
@@ -527,24 +554,33 @@ class UIEventsMixin:
         if self._context_menu_open:
             if self.title_bar.isVisible():
                 self.title_bar.hide()
-        elif self.current_index < 0:
-            if not self.title_bar.isVisible() and not self.isFullScreen():
-                self._sync_title_bar_geometry()
-                self.title_bar.show()
-                self.title_bar.raise_()
         else:
-            if self.rect().contains(local_pos) and local_pos.y() < 60:
-                if not self.title_bar.isVisible() and not self.isFullScreen():
+            should_show_title_bar = self._should_show_title_bar(local_pos)
+            if should_show_title_bar:
+                if not self.title_bar.isVisible():
                     self._sync_title_bar_geometry()
                     self.title_bar.show()
                     self.title_bar.raise_()
             elif self.title_bar.isVisible():
-                if local_pos.y() >= 60 or not self.rect().contains(local_pos):
-                    self.title_bar.hide()
-
-        if self.isFullScreen() and self.title_bar.isVisible():
-            self.title_bar.hide()
+                self.title_bar.hide()
         self._enforce_overlay_stack()
+
+        transient_ui_active = bool(
+            in_resize_area
+            or is_resizing
+            or volume_popup_active
+            or self._context_menu_open
+            or getattr(self, "_playlist_drag_reveal_active", False)
+            or self.overlay.isVisible()
+            or self.playlist_overlay.isVisible()
+            or self.title_bar.isVisible()
+        )
+        target_interval = (
+            getattr(self, "_mouse_timer_fast_interval", 100)
+            if cursor_moved or transient_ui_active
+            else getattr(self, "_mouse_timer_slow_interval", 180)
+        )
+        self._set_mouse_poll_interval(target_interval)
 
     def resizeEvent(self, event):
         self.video_container.setGeometry(0, 0, self.width(), self.height())
@@ -598,6 +634,8 @@ class UIEventsMixin:
         self._exec_modal(dialog)
 
     def toggle_window_maximize(self):
+        if self.isFullScreen():
+            return
         if self.isMaximized():
             self.showNormal()
             self.title_bar.max_btn.setIcon(QIcon(icon_maximize(18)))
@@ -821,14 +859,16 @@ class UIEventsMixin:
         self.setUpdatesEnabled(False)
         try:
             if target_fullscreen:
-                self.setWindowState(self.windowState() | Qt.WindowFullScreen)
+                self._windowed_was_maximized_before_fullscreen = self.isMaximized()
+                self.showFullScreen()
             else:
-                self.setWindowState(self.windowState() & ~Qt.WindowFullScreen)
-            self.show()
-            self.player.fullscreen = target_fullscreen
+                if self._windowed_was_maximized_before_fullscreen:
+                    self.showMaximized()
+                else:
+                    self.showNormal()
             self.update_fullscreen_icon()
         finally:
-            QTimer.singleShot(90, self._finalize_fullscreen_toggle)
+            QTimer.singleShot(45, self._finalize_fullscreen_toggle)
 
     def _finalize_fullscreen_toggle(self):
         self.setUpdatesEnabled(True)
@@ -1327,12 +1367,33 @@ class UIEventsMixin:
     def _handle_pending_background_and_auto_next(self, suppress_end_advance: bool) -> bool:
         if self._pending_show_background:
             self._pending_show_background = False
+            self._pending_hide_background = False
             self.background_widget.show()
         if self._pending_auto_next and not suppress_end_advance:
             self._pending_auto_next = False
             self._advance_after_end()
             return True
         return False
+
+    def _maybe_hide_background_cover(self, now: float, position, duration) -> None:
+        if not getattr(self, "_pending_hide_background", False):
+            return
+        if self.current_index < 0:
+            self._pending_hide_background = False
+            self.background_widget.show()
+            return
+
+        has_timeline_signal = any(
+            value is not None and math.isfinite(value) and value >= 0
+            for value in (position, duration)
+        )
+        dims_ready = bool(getattr(self, "_last_resize_dims", None))
+        elapsed = now - float(getattr(self, "_last_track_switch_time", 0.0) or 0.0)
+        slow_start_fallback_ready = elapsed >= 0.45 and not self._is_engine_busy
+
+        if has_timeline_signal or dims_ready or slow_start_fallback_ready:
+            self._pending_hide_background = False
+            self.background_widget.hide()
 
     def _should_skip_ui_poll(self, now: float) -> bool:
         if now < self._suspend_ui_poll_until:
@@ -1474,6 +1535,7 @@ class UIEventsMixin:
             position = self.player.time_pos
             duration = self.player.duration
             self._sync_progress_caches(now, position, duration)
+            self._maybe_hide_background_cover(now, position, duration)
             self._sync_runtime_duration_for_current(duration)
 
             if self._should_advance_after_end(now, position, duration, suppress_end_advance):
@@ -2157,33 +2219,43 @@ class UIEventsMixin:
             return False
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and self._is_owned_by_player(obj):
-            owner_windows = {
-                self,
-                getattr(self, "overlay", None),
-                getattr(self, "speed_overlay", None),
-                getattr(self, "playlist_overlay", None),
-                getattr(self, "title_bar", None),
-            }
-            target_window = obj.window() if isinstance(obj, QWidget) else None
-            if target_window not in owner_windows:
-                return QMainWindow.eventFilter(self, obj, event)
+        try:
+            if event.type() == QEvent.KeyPress and self._is_owned_by_player(obj):
+                owner_windows = {
+                    self,
+                    getattr(self, "overlay", None),
+                    getattr(self, "speed_overlay", None),
+                    getattr(self, "playlist_overlay", None),
+                    getattr(self, "title_bar", None),
+                }
+                target_window = obj.window() if isinstance(obj, QWidget) else None
+                if target_window not in owner_windows:
+                    return QMainWindow.eventFilter(self, obj, event)
 
-            focused = QApplication.focusWidget()
-            if isinstance(focused, QLineEdit):
-                return QMainWindow.eventFilter(self, obj, event)
-            if self._is_playlist_search_focused() or self._is_playlist_widget_focused():
-                return QMainWindow.eventFilter(self, obj, event)
+                focused = QApplication.focusWidget()
+                if isinstance(focused, QLineEdit):
+                    return QMainWindow.eventFilter(self, obj, event)
+                if self._is_playlist_search_focused() or self._is_playlist_widget_focused():
+                    return QMainWindow.eventFilter(self, obj, event)
 
-            if not self._is_app_shortcut_key(event):
-                if self._trigger_script_binding_for_event(event):
-                    return True
-                if self._forward_key_to_mpv(event):
-                    return True
+                if not self._is_app_shortcut_key(event):
+                    if self._trigger_script_binding_for_event(event):
+                        return True
+                    if self._forward_key_to_mpv(event):
+                        return True
+                    return QMainWindow.eventFilter(self, obj, event)
+                self.keyPressEvent(event)
+                return True
+            if event.type() == QEvent.DragLeave and self._is_owned_by_player(obj):
+                QTimer.singleShot(0, self._safe_end_playlist_drag_reveal_if_outside)
                 return QMainWindow.eventFilter(self, obj, event)
-            self.keyPressEvent(event)
-            return True
-        return QMainWindow.eventFilter(self, obj, event)
+            return QMainWindow.eventFilter(self, obj, event)
+        except RuntimeError as exc:
+            logging.debug("eventFilter runtime error: %s", exc)
+            return False
+        except Exception:
+            logging.exception("eventFilter failed")
+            return False
 
     def wheelEvent(self, event):
         if (
@@ -2253,15 +2325,73 @@ class UIEventsMixin:
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
+            self._begin_playlist_drag_reveal()
             event.acceptProposedAction()
             return
         QMainWindow.dragEnterEvent(self, event)
 
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            self._begin_playlist_drag_reveal()
+            event.acceptProposedAction()
+            return
+        QMainWindow.dragMoveEvent(self, event)
+
+    def dragLeaveEvent(self, event):
+        QTimer.singleShot(0, self._end_playlist_drag_reveal_if_outside)
+        QMainWindow.dragLeaveEvent(self, event)
+
     def dropEvent(self, event):
+        self._begin_playlist_drag_reveal()
         target = "playlist" if self._is_cursor_over_playlist_panel() else "video"
         self.handle_drop_urls(event.mimeData().urls(), drop_target=target)
+        self._end_playlist_drag_reveal()
         if not event.isAccepted():
             event.acceptProposedAction()
+
+    def _begin_playlist_drag_reveal(self) -> None:
+        if not hasattr(self, "playlist_overlay"):
+            return
+        self._playlist_drag_reveal_active = True
+        if hasattr(self, "playlist_auto_hide_timer"):
+            self.playlist_auto_hide_timer.stop()
+        if self.pinned_playlist or self.playlist_overlay.isVisible():
+            return
+        self._playlist_drag_opened_temporarily = True
+        self._sync_playlist_overlay_geometry()
+        self.playlist_overlay.show()
+        self.playlist_overlay.raise_()
+        if hasattr(self, "playlist_widget"):
+            self.playlist_widget.updateGeometries()
+            QTimer.singleShot(1, self.playlist_widget.update)
+
+    def _end_playlist_drag_reveal(self) -> None:
+        if not hasattr(self, "playlist_overlay"):
+            return
+        self._playlist_drag_reveal_active = False
+        if self._playlist_drag_opened_temporarily:
+            self._playlist_drag_opened_temporarily = False
+            if not self.pinned_playlist:
+                self.playlist_overlay.hide()
+
+    def _end_playlist_drag_reveal_if_outside(self) -> None:
+        if not getattr(self, "_playlist_drag_reveal_active", False):
+            return
+        global_pos = QCursor.pos()
+        in_main = self.frameGeometry().contains(global_pos)
+        in_playlist = bool(
+            hasattr(self, "playlist_overlay")
+            and self.playlist_overlay.isVisible()
+            and self.playlist_overlay.frameGeometry().contains(global_pos)
+        )
+        if not in_main and not in_playlist:
+            self._end_playlist_drag_reveal()
+
+    def _safe_end_playlist_drag_reveal_if_outside(self) -> None:
+        try:
+            self._end_playlist_drag_reveal_if_outside()
+        except RuntimeError as exc:
+            logging.debug("drag reveal cleanup skipped: %s", exc)
 
     def _is_cursor_over_playlist_panel(self) -> bool:
         return bool(
@@ -2273,15 +2403,18 @@ class UIEventsMixin:
     def handle_drop_urls(self, urls, drop_target: str = "auto"):
         local_paths = []
         remote_urls = []
-        for qurl in urls or []:
-            local = qurl.toLocalFile()
-            if local:
-                local_paths.append(Path(local))
-                continue
-            value = qurl.toString().strip()
-            if value:
-                remote_urls.append(value)
-        self.handle_dropped_paths(local_paths, remote_urls=remote_urls, drop_target=drop_target)
+        try:
+            for qurl in urls or []:
+                local = qurl.toLocalFile()
+                if local:
+                    local_paths.append(Path(local))
+                    continue
+                value = qurl.toString().strip()
+                if value:
+                    remote_urls.append(value)
+            self.handle_dropped_paths(local_paths, remote_urls=remote_urls, drop_target=drop_target)
+        finally:
+            self._end_playlist_drag_reveal()
 
     def _focused_widget(self):
         return QApplication.focusWidget()

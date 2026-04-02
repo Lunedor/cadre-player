@@ -12,6 +12,7 @@ It is focused on:
 - fast playlist workflows
 - clean playback controls
 - local files + URL-based media (WebDAV, m3u/m3u8, YouTube links/playlists)
+- archive-friendly playback for ZIP/RAR collections without full manual extraction
 
 ## Screenshots
 
@@ -33,7 +34,9 @@ It is focused on:
 - Frameless UI with custom title overlay and transport controls
 - Move window by click+hold on the video area (not only the title bar)
 - Playlist panel with drag-drop reorder, search, sort, and multi-select actions
+- Playlist refresh keeps scroll position and selection stable during reorder/sort/remove flows
 - Import from file, folder, URL, remote m3u/m3u8, and WebDAV folder
+- ZIP / RAR archive import with one playlist item per playable entry
 - YouTube URL/playlist extraction through `yt-dlp`
 - Playback speed controls, shuffle, repeat modes
 - Visual chapter markers on the seekbar (from libmpv chapter metadata)
@@ -52,6 +55,7 @@ It is focused on:
 - Playlist save/load
 - Runtime diagnostics logging (`logs.txt`)
 - Windows external media control support (hardware media keys and common remote apps)
+- Fullscreen top-edge hover title bar and cleaner fullscreen/media-switch transitions
 
 ## Requirements
 
@@ -63,6 +67,7 @@ It is focused on:
   - `Send2Trash`
   - `yt-dlp`
 - For reliable modern YouTube extraction, install `Deno` (2.0+ recommended) and ensure `deno` is available on PATH.
+- For portable RAR playback, bundle `bsdtar.exe` in `vendor/` (preferred) or provide `tar.exe` as a fallback.
 
 Windows is the primary tested platform.
 
@@ -179,6 +184,9 @@ In packaged/frozen mode on Windows, files are stored in:
   - ensure `deno` is installed and available on PATH
   - ensure internet access works
   - check `logs.txt` for lines containing `YouTube extract` and `URL resolve`
+- RAR files open as a single file or fail to play:
+  - ensure `bsdtar.exe` is bundled in `vendor/` for portable builds
+  - verify the packaged app actually includes the helper binary next to the executable
 - URL dialog closes without importing:
   - press the `Open` button explicitly (Enter now triggers Open in the URL field)
 - No playback:

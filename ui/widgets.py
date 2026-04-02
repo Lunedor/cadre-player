@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
 )
 
+from ..utils import is_archive_member_source, parse_archive_member_source
+
 
 PLAYLIST_PATH_ROLE = Qt.UserRole + 1
 PLAYLIST_NAME_ROLE = Qt.UserRole + 2
@@ -46,6 +48,11 @@ def _playlist_item_name(path_value: str) -> str:
         return token
 
     text = str(path_value or "")
+    if is_archive_member_source(text):
+        archive_path, member_name = parse_archive_member_source(text)
+        archive_label = _basename(archive_path)
+        member_label = _basename(member_name) or member_name
+        return f"{member_label} [{archive_label}]" if archive_label else member_label
     lowered = text.lower()
     if lowered.startswith(("http://", "https://")):
         tail = text.split("://", 1)[1]
@@ -250,6 +257,10 @@ class PlaylistListModel(QAbstractListModel):
         if row is not None:
             idx = self.index(row, 0)
             self.dataChanged.emit(idx, idx, [PLAYLIST_NAME_ROLE])
+
+    def row_for_path(self, path: str) -> int:
+        row = self._row_by_path.get(str(path))
+        return int(row) if row is not None else -1
 
     def paths(self):
         return list(self._paths)

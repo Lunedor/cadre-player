@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse, urlsplit, 
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QItemSelectionModel, QPoint, QTimer, QUrl
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QMenu, QMessageBox
@@ -21,14 +21,20 @@ from .settings import load_stream_auth_settings, save_resume_position
 from .ui.styles import MENU_STYLE
 from .utils import (
     AUDIO_EXTENSIONS,
+    ARCHIVE_EXTENSIONS,
     VIDEO_EXTENSIONS,
     collect_paths,
     delete_to_trash as util_delete_to_trash,
     format_duration,
     get_user_data_path,
+    is_archive_file,
+    is_archive_member_source,
     is_media_file,
+    is_playable_file,
     is_audio_file,
+    list_archive_member_sources,
     list_folder_media,
+    parse_archive_member_source,
     is_video_file,
     is_stream_url as _is_stream_url,
 )
@@ -55,6 +61,8 @@ def _build_ytdlp_opts(extra: Optional[dict] = None) -> dict:
 
 def normalize_playlist_entry(value) -> tuple[str, str]:
     raw = str(value).strip()
+    if is_archive_member_source(raw):
+        return raw, raw.casefold()
     if _is_stream_url(raw):
         return raw, raw.casefold()
     abs_path = os.path.abspath(raw)
@@ -417,7 +425,7 @@ def _fetch_webdav_listing(url: str, auth: Optional[dict] = None) -> tuple[list[s
             dirs.append(full)
             continue
         ext = Path(unquote(parsed.path)).suffix.lower()
-        if ext in VIDEO_EXTENSIONS or ext in AUDIO_EXTENSIONS:
+        if ext in VIDEO_EXTENSIONS or ext in AUDIO_EXTENSIONS or ext in ARCHIVE_EXTENSIONS:
             files.append(full)
     seen = set()
     files_unique = []
@@ -820,6 +828,20 @@ class PlaylistPrepareWorker(QThread):
         self.use_collect = use_collect
         self.include_audio = bool(include_audio)
 
+    def _expand_candidate(self, candidate: str) -> list[str]:
+        token = str(candidate or "").strip()
+        if not token:
+            return []
+        if _is_stream_url(token) or is_archive_member_source(token):
+            return [token]
+        p = Path(token)
+        if p.is_file() and is_archive_file(p):
+            archive_items = list_archive_member_sources(p, include_audio=self.include_audio)
+            return archive_items or [str(p.resolve())]
+        if p.is_file() and is_playable_file(p, include_audio=self.include_audio):
+            return [str(p.resolve())]
+        return []
+
     def run(self):
         if self.use_collect:
             candidates = collect_paths(
@@ -832,15 +854,13 @@ class PlaylistPrepareWorker(QThread):
         else:
             candidates = []
             for raw in self.raw_paths:
-                candidate = str(raw or "").strip()
-                if not candidate:
-                    continue
-                if _is_stream_url(candidate):
-                    candidates.append(candidate)
-                    continue
-                p = Path(candidate)
-                if p.is_file() and is_media_file(p, include_audio=self.include_audio):
-                    candidates.append(str(p.resolve()))
+                candidates.extend(self._expand_candidate(raw))
+
+        if self.use_collect:
+            expanded = []
+            for candidate in candidates:
+                expanded.extend(self._expand_candidate(candidate))
+            candidates = expanded
 
         unique_paths = []
         seen = set(self.existing_keys)
@@ -973,7 +993,7 @@ class PlaylistViewMixin:
                     subtitle_files.append(str(p.resolve()))
                 elif _looks_like_m3u_path(str(p)):
                     local_m3u_files.append(p)
-                elif is_media_file(p, include_audio=self._include_audio_in_imports()):
+                elif is_playable_file(p, include_audio=self._include_audio_in_imports()):
                     media_files.append(str(p.resolve()))
             elif p.is_dir():
                 folders.append(p)
@@ -1033,6 +1053,9 @@ class PlaylistViewMixin:
     def is_video_file(self, path: Path) -> bool:
         return is_video_file(path)
 
+    def is_playable_file(self, path: Path) -> bool:
+        return is_playable_file(path, include_audio=self._include_audio_in_imports())
+
     def is_audio_file(self, path: Path) -> bool:
         return is_audio_file(path)
 
@@ -1052,7 +1075,7 @@ class PlaylistViewMixin:
                     self.restore_session_playlist(silent_if_missing=True)
             return
 
-        if len(paths) == 1 and paths[0].is_file() and self.is_video_file(paths[0]):
+        if len(paths) == 1 and paths[0].is_file() and self.is_playable_file(paths[0]):
             self.quick_open_file(paths[0])
             return
 
@@ -1076,6 +1099,31 @@ class PlaylistViewMixin:
 
     def quick_open_file(self, file_path: Path):
         selected = file_path.resolve()
+        if is_archive_file(selected):
+            archive_items = list_archive_member_sources(selected, include_audio=self._include_audio_in_imports())
+            if archive_items:
+                old_set = set(str(p) for p in self.playlist)
+                new_set = set(str(p) for p in archive_items)
+                self._prune_playlist_metadata(old_set - new_set)
+                self.playlist = archive_items
+                self.current_index = 0
+                self.rebuild_shuffle_order(keep_current=True)
+                self.refresh_playlist_view()
+                self._save_session_playlist_snapshot()
+                self.play_current()
+                return
+            selected_str = str(selected)
+            old_set = set(str(p) for p in self.playlist)
+            new_set = {selected_str}
+            self._prune_playlist_metadata(old_set - new_set)
+            self.playlist = [selected_str]
+            self.current_index = 0
+            self.rebuild_shuffle_order(keep_current=True)
+            self.refresh_playlist_view()
+            self._save_session_playlist_snapshot()
+            self.play_current()
+            return
+
         sel_str = os.path.normpath(str(selected))
         sel_lower = sel_str.lower()
 
@@ -1245,23 +1293,6 @@ class PlaylistViewMixin:
             return False
         self._next_track_switch_allowed_at = now + self._track_switch_cooldown
         return True
-
-    def _schedule_play_current(self, delay_ms: int = 0):
-        self._switch_request_id += 1
-        req_id = self._switch_request_id
-        target_index = self.current_index
-
-        def _run():
-            if req_id != self._switch_request_id:
-                return
-            if target_index != self.current_index:
-                return
-            self.play_current()
-
-        if delay_ms <= 0:
-            _run()
-        else:
-            QTimer.singleShot(int(delay_ms), _run)
 
     def _apply_prepared_playlist_paths(
         self,
@@ -1491,18 +1522,24 @@ class PlaylistViewMixin:
         if include_audio:
             filter_str = (
                 tr("Media Files ({})").format(
-                    " ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS)
+                    " ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS + AUDIO_EXTENSIONS + ARCHIVE_EXTENSIONS)
                 )
                 + ";;"
                 + tr("Video Files ({})").format(" ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS))
                 + ";;"
                 + tr("Audio Files ({})").format(" ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS))
                 + ";;"
+                + tr("Archives ({})").format(" ".join(f"*{ext}" for ext in ARCHIVE_EXTENSIONS))
+                + ";;"
                 + tr("All files (*.*)")
             )
         else:
             filter_str = (
-                tr("Video Files ({})").format(" ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS))
+                tr("Video Files ({})").format(
+                    " ".join(f"*{ext}" for ext in VIDEO_EXTENSIONS + ARCHIVE_EXTENSIONS)
+                )
+                + ";;"
+                + tr("Archives ({})").format(" ".join(f"*{ext}" for ext in ARCHIVE_EXTENSIONS))
                 + ";;"
                 + tr("All files (*.*)")
             )
@@ -1698,12 +1735,16 @@ class PlaylistViewMixin:
         if not hasattr(self, "playlist_widget"):
             return
 
+        state = self._capture_playlist_view_state()
         self._playlist_refresh_lock = True
-        self.playlist_model.set_paths([], self.playlist_durations, self.playlist_titles)
-        self._append_to_view(self.playlist, apply_filter=False)
-        self._playlist_refresh_lock = False
-        self.apply_playlist_filter()
-        self.highlight_current_item()
+        self._pending_model_appends.clear()
+        self._append_chunk_timer.stop()
+        try:
+            self.playlist_model.set_paths(self.playlist, self.playlist_durations, self.playlist_titles)
+        finally:
+            self._playlist_refresh_lock = False
+        self.apply_playlist_filter(scroll_mode="preserve")
+        self._restore_playlist_view_state(state)
 
     def _append_to_view(self, paths, apply_filter: bool = True):
         if not hasattr(self, "playlist_widget") or not paths:
@@ -1755,7 +1796,7 @@ class PlaylistViewMixin:
         # Filter from the first character; only debounce to keep typing smooth.
         self._search_debounce_timer.start()
 
-    def apply_playlist_filter(self):
+    def apply_playlist_filter(self, scroll_mode: str = "preserve"):
         if not hasattr(self, "playlist_widget"):
             return
 
@@ -1770,7 +1811,7 @@ class PlaylistViewMixin:
         self.playlist_widget.setDragDropMode(
             QAbstractItemView.InternalMove if can_reorder else QAbstractItemView.NoDragDrop
         )
-        self.highlight_current_item()
+        self.highlight_current_item(scroll_mode=scroll_mode)
 
     def _proxy_index_to_playlist_row(self, proxy_index):
         if not proxy_index or not proxy_index.isValid():
@@ -1800,16 +1841,46 @@ class PlaylistViewMixin:
         if self._full_duration_scan_active:
             self.show_status_overlay(tr("Duration scan is running (F4 to cancel)"))
             return
-        if not self._can_switch_track_now(manual=True):
-            return
         proxy_index = _index if (_index is not None and _index.isValid()) else self.playlist_widget.currentIndex()
         row = self._proxy_index_to_playlist_row(proxy_index)
         if row < 0:
             return
+        self._switch_to_playlist_index(row, manual=True)
+
+    def _switch_to_playlist_index(
+        self,
+        row: int,
+        *,
+        manual: bool,
+        status_message: str = "",
+    ) -> bool:
+        if row < 0 or row >= len(self.playlist):
+            return False
+        if not self._can_switch_track_now(manual=manual):
+            return False
+
+        previous_index = self.current_index
         self.save_current_resume_info()
+        if previous_index != row:
+            self._pending_auto_next = False
+            self._auto_next_deadline = 0.0
+            self._is_engine_busy = False
+            self._pending_show_background = False
+            self._pending_hide_background = True
+            self.background_widget.show()
+            try:
+                self.player.command("stop")
+            except Exception:
+                pass
+            self._cached_paused = True
+            self.update_transport_icons()
+
         self._user_paused = False
         self.current_index = row
-        self._schedule_play_current(self._manual_switch_delay_ms)
+        self.play_current()
+        if status_message:
+            self.show_status_overlay(status_message)
+        return True
 
     def remove_playlist_index(self, index: int):
         self.remove_playlist_indices([index])
@@ -1926,7 +1997,16 @@ class PlaylistViewMixin:
             self.playlist_durations.pop(key, None)
             self.playlist_raw_durations.pop(key, None)
 
+    def _archive_entry_display_name(self, item: str) -> str:
+        archive_path, member_name = parse_archive_member_source(item)
+        archive_label = Path(archive_path).name if archive_path else ""
+        member_label = Path(member_name).name if member_name else str(item)
+        return f"{member_label} [{archive_label}]" if archive_label else member_label
+
     def _apply_resolved_metadata(self, title_map=None, duration_map=None):
+        for item in self.playlist:
+            if is_archive_member_source(item) and not str(self.playlist_titles.get(item, "")).strip():
+                self.playlist_titles[item] = self._archive_entry_display_name(item)
         for path, title in (title_map or {}).items():
             value = str(title or "").strip()
             if _is_youtube_url(str(path)) and _is_placeholder_title(value):
@@ -1941,7 +2021,80 @@ class PlaylistViewMixin:
             except (TypeError, ValueError):
                 continue
 
-    def highlight_current_item(self):
+    def _playlist_path_from_proxy_index(self, proxy_index) -> str:
+        row = self._proxy_index_to_playlist_row(proxy_index)
+        if row < 0:
+            return ""
+        return str(self.playlist[row] or "")
+
+    def _proxy_index_for_playlist_path(self, path: str):
+        if not path:
+            return self.playlist_widget.rootIndex()
+        source_row = self.playlist_model.row_for_path(str(path))
+        if source_row < 0:
+            return self.playlist_widget.rootIndex()
+        return self.playlist_filter_model.mapFromSource(self.playlist_model.index(source_row, 0))
+
+    def _capture_playlist_view_state(self) -> dict:
+        if not hasattr(self, "playlist_widget"):
+            return {}
+
+        widget = self.playlist_widget
+        bar = widget.verticalScrollBar()
+        top_index = widget.indexAt(QPoint(0, 0))
+        top_path = self._playlist_path_from_proxy_index(top_index)
+        top_hidden_offset = 0
+        if top_index.isValid():
+            top_hidden_offset = max(0, -widget.visualRect(top_index).top())
+
+        selected_paths = []
+        selection_model = widget.selectionModel()
+        if selection_model is not None:
+            selected_paths = [
+                self._playlist_path_from_proxy_index(index)
+                for index in selection_model.selectedRows()
+            ]
+
+        return {
+            "scroll_value": int(bar.value()) if bar is not None else 0,
+            "top_path": top_path,
+            "top_hidden_offset": int(top_hidden_offset),
+            "selected_paths": [path for path in selected_paths if path],
+            "current_path": self._playlist_path_from_proxy_index(widget.currentIndex()),
+        }
+
+    def _restore_playlist_view_state(self, state: dict) -> None:
+        if not hasattr(self, "playlist_widget") or not state:
+            return
+
+        widget = self.playlist_widget
+        selection_model = widget.selectionModel()
+        if selection_model is not None:
+            selection_model.clearSelection()
+            for path in state.get("selected_paths", []):
+                proxy_idx = self._proxy_index_for_playlist_path(path)
+                if proxy_idx.isValid():
+                    selection_model.select(
+                        proxy_idx,
+                        QItemSelectionModel.Select | QItemSelectionModel.Rows,
+                    )
+
+        current_proxy = self._proxy_index_for_playlist_path(state.get("current_path", ""))
+        if current_proxy.isValid():
+            widget.setCurrentIndex(current_proxy)
+
+        bar = widget.verticalScrollBar()
+        top_proxy = self._proxy_index_for_playlist_path(state.get("top_path", ""))
+        if top_proxy.isValid():
+            widget.scrollTo(top_proxy, QAbstractItemView.PositionAtTop)
+            hidden_offset = int(state.get("top_hidden_offset", 0) or 0)
+            if hidden_offset > 0:
+                bar.setValue(bar.value() + hidden_offset)
+            return
+
+        bar.setValue(int(state.get("scroll_value", 0) or 0))
+
+    def highlight_current_item(self, scroll_mode: str = "preserve"):
         if not hasattr(self, "playlist_widget"):
             return
         try:
@@ -1957,8 +2110,10 @@ class PlaylistViewMixin:
             proxy_idx = self.playlist_filter_model.mapFromSource(source_idx)
             if not proxy_idx.isValid():
                 return
-            # Keep selection logic independent; only ensure visibility.
-            self.playlist_widget.scrollTo(proxy_idx, QAbstractItemView.PositionAtCenter)
+            if scroll_mode == "center":
+                self.playlist_widget.scrollTo(proxy_idx, QAbstractItemView.PositionAtCenter)
+            elif scroll_mode == "ensure_visible":
+                self.playlist_widget.scrollTo(proxy_idx, QAbstractItemView.EnsureVisible)
         except Exception:
             logging.exception("highlight_current_item failed")
 
@@ -1979,7 +2134,7 @@ class PlaylistViewMixin:
         else:
             self.current_index = -1
         self.rebuild_shuffle_order(keep_current=True)
-        self.highlight_current_item()
+        self.highlight_current_item(scroll_mode="preserve")
         self._save_session_playlist_snapshot()
 
     def show_sort_menu(self):
@@ -2065,7 +2220,6 @@ class PlaylistViewMixin:
         dir_name = tr("DESC") if reverse else tr("ASC")
         self.show_status_overlay(tr("Sorted: {} {}").format(key_name, dir_name))
         self.refresh_playlist_view()
-        self.highlight_current_item()
 
     def _session_playlist_path(self) -> str:
         return str(get_user_data_path("session_playlist.m3u"))

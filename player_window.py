@@ -84,10 +84,13 @@ from .ui.widgets import (
 
 
 from .utils import (
+    extract_archive_member_to_path,
     format_duration,
     get_user_data_dir,
+    is_archive_member_source,
     is_stream_url as _is_stream_url,
     media_basename_from_source,
+    parse_archive_member_source,
 )
 from .playlist import (
     PlaylistViewMixin,
@@ -157,8 +160,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.include_audio_in_imports = load_import_include_audio(True)
 
         self._playlist_refresh_lock = False
+        self._playlist_drag_reveal_active = False
+        self._playlist_drag_opened_temporarily = False
         self._pending_auto_next = False
         self._pending_show_background = False
+        self._pending_hide_background = False
         self._playlist_last_hovered = 0
         self._cached_paused = True
         self._cached_muted = False
@@ -171,8 +177,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._last_resize_dims = None
         self._track_switch_cooldown = 1.10
         self._manual_switch_settle_sec = 1.10
-        self._manual_switch_delay_ms = 240
-        self._switch_request_id = 0
         self._next_loadfile_allowed_at = 0.0
         self._loadfile_cooldown = 0.32
         self._play_retry_pending = False
@@ -273,6 +277,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._seek_thumb_temp_dir = Path(tempfile.gettempdir()) / "cadre-player-thumbnails"
         self._seek_thumb_temp_dir.mkdir(parents=True, exist_ok=True)
         self._clear_seek_thumbnail_temp_dir()
+        self._archive_temp_dir = Path(tempfile.gettempdir()) / "cadre-player-archives"
+        self._archive_temp_dir.mkdir(parents=True, exist_ok=True)
+        self._active_archive_source = ""
+        self._active_archive_temp_path = None
         self._ffmpeg_probe_done = False
         self._ffmpeg_available = False
 
@@ -404,6 +412,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.mouse_timer.setInterval(100)
         self.mouse_timer.timeout.connect(self.check_mouse_pos)
         self.mouse_timer.start()
+        self._mouse_timer_fast_interval = 100
+        self._mouse_timer_slow_interval = 180
         
         self.last_cursor_global_pos = QCursor.pos()
         self.cursor_idle_time = 0
@@ -417,6 +427,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._is_resizing = False # Add this
         self._context_menu_open = False
         self._fullscreen_transition_active = False
+        self._windowed_was_maximized_before_fullscreen = False
         self._last_media_command = None
         self._last_media_command_at = 0.0
         self._last_media_action = ""
@@ -526,6 +537,12 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
     def dragEnterEvent(self, event):
         return UIEventsMixin.dragEnterEvent(self, event)
+
+    def dragMoveEvent(self, event):
+        return UIEventsMixin.dragMoveEvent(self, event)
+
+    def dragLeaveEvent(self, event):
+        return UIEventsMixin.dragLeaveEvent(self, event)
 
     def dropEvent(self, event):
         return UIEventsMixin.dropEvent(self, event)
@@ -737,10 +754,61 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
     def _is_local_playlist_item(self, media_path: str) -> bool:
         token = str(media_path or "").strip()
-        if not token or _is_stream_url(token):
+        if not token or _is_stream_url(token) or is_archive_member_source(token):
             return False
         p = Path(token)
         return p.exists() and p.is_file()
+
+    def _cleanup_active_archive_temp(self, keep_source: str = "") -> None:
+        if keep_source and str(keep_source) == str(self._active_archive_source):
+            return
+        temp_path = self._active_archive_temp_path
+        self._active_archive_source = ""
+        self._active_archive_temp_path = None
+        if not temp_path:
+            return
+        try:
+            path_obj = Path(temp_path)
+            if path_obj.exists():
+                path_obj.unlink()
+            parent = path_obj.parent
+            if parent.exists() and parent != self._archive_temp_dir:
+                try:
+                    parent.rmdir()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+    def _resolve_playback_source(self, media_source: str) -> str:
+        source = str(media_source or "").strip()
+        if not is_archive_member_source(source):
+            self._cleanup_active_archive_temp()
+            return source
+
+        if (
+            source == str(self._active_archive_source or "")
+            and self._active_archive_temp_path
+            and Path(self._active_archive_temp_path).exists()
+        ):
+            return str(self._active_archive_temp_path)
+
+        self._cleanup_active_archive_temp()
+        archive_path, member_name = parse_archive_member_source(source)
+        if not archive_path or not member_name:
+            raise RuntimeError("Archive entry is invalid.")
+
+        token_hash = hashlib.sha1(source.encode("utf-8", errors="replace")).hexdigest()
+        suffix = Path(member_name).suffix
+        target_dir = self._archive_temp_dir / token_hash
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / f"entry{suffix}"
+
+        extract_archive_member_to_path(archive_path, member_name, target_path)
+
+        self._active_archive_source = source
+        self._active_archive_temp_path = str(target_path)
+        return str(target_path)
 
     def _probe_ffmpeg_available(self) -> bool:
         if self._ffmpeg_probe_done:
@@ -998,7 +1066,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.playlist_overlay.setAttribute(Qt.WA_TranslucentBackground)
         
         # External window shadow
-        self.apply_panel_shadow(self.playlist_overlay.panel, blur=30, offset_y=0)
+        self.apply_panel_shadow(self.playlist_overlay.panel, blur=22, offset_y=0)
 
         layout = QVBoxLayout(self.playlist_overlay.panel)
         layout.setContentsMargins(12, 40, 12, 12) # Leave space for title bar buttons
@@ -1216,6 +1284,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             event.accept()
             return
         self._is_shutting_down = True
+        self._cleanup_active_archive_temp()
         logging.info("Close event: shutdown begin")
         # External watchdog: survives native deadlocks that can block Python threads/GIL.
         try:
@@ -1407,6 +1476,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
     def _prepare_playback_switch_state(self, current_file) -> None:
         self._pending_auto_next = False
         self._pending_show_background = False
+        self._pending_hide_background = True
+        self.background_widget.show()
         self._last_track_switch_time = time.monotonic()
         # Always keep a bounded post-load resize probe as a hard fallback.
         # Some files expose dimensions only after decode starts.
@@ -1451,7 +1522,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             QTimer.singleShot(380, lambda t=load_token: self._ensure_playback_unpaused(t))
 
     def _reset_ui_for_loaded_track(self, current_file, load_token: int) -> None:
-        self.background_widget.hide()
         self._cached_paused = False
         known_duration = 0.0
         try:
@@ -1471,7 +1541,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.sync_shuffle_pos_to_current()
         QTimer.singleShot(
             0,
-            lambda t=load_token: self.highlight_current_item() if t == self._playback_load_token else None,
+            lambda t=load_token: self.highlight_current_item(scroll_mode="ensure_visible")
+            if t == self._playback_load_token
+            else None,
         )
 
     def _display_name_for_track(self, current_file) -> str:
@@ -1483,6 +1555,11 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             ):
                 return display_name
         try:
+            if is_archive_member_source(str(current_file)):
+                archive_path, member_name = parse_archive_member_source(str(current_file))
+                archive_label = Path(archive_path).name if archive_path else ""
+                member_label = Path(member_name).name if member_name else "Archive item"
+                return f"{member_label} [{archive_label}]" if archive_label else member_label
             parsed = urlparse(str(current_file))
             if parsed.scheme and parsed.netloc:
                 if _is_youtube_url(str(current_file)):
@@ -1550,10 +1627,19 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         )
 
         current_file = self.playlist[self.current_index]
+        try:
+            playback_source = self._resolve_playback_source(current_file)
+        except Exception as e:
+            self._is_engine_busy = False
+            self._pending_hide_background = False
+            self.background_widget.show()
+            logging.warning("Could not prepare archive playback source: src=%s err=%s", current_file, e)
+            self.show_status_overlay(tr("Could not open archive entry"))
+            return
         self._apply_stream_auth_header_for_current(current_file)
         self._apply_seek_profile_for_source(current_file)
         self._prepare_playback_switch_state(current_file)
-        self._load_current_file_with_resize_strategy(current_file, load_token)
+        self._load_current_file_with_resize_strategy(playback_source, load_token)
         self._reset_ui_for_loaded_track(current_file, load_token)
         self._update_window_title_for_track(current_file)
         self._schedule_resume_and_chapter_refresh(current_file, load_token)
@@ -1597,12 +1683,12 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
     def stop_playback(self):
         self.save_current_resume_info()
-        # Cancel any delayed/scheduled switch from rapid navigation.
-        self._switch_request_id += 1
         # Ensure stop never triggers a deferred auto-next transition.
         self._pending_auto_next = False
         self._auto_next_deadline = 0.0
         self._is_engine_busy = False
+        self._pending_hide_background = False
+        self._cleanup_active_archive_temp()
         self.player.command("stop")
         self.background_widget.show()
         self._cached_paused = True
@@ -1647,6 +1733,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             self._is_engine_busy = False
             self._pending_auto_next = True
             self._cached_paused = True
+            self._pending_hide_background = False
         elif name == "start-file":
             self._is_engine_busy = False
             self._pending_auto_next = False

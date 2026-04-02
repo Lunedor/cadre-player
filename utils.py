@@ -5,9 +5,11 @@ import json
 import struct
 import time
 import hashlib
+import shutil
+import zipfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse, unquote
+from urllib.parse import parse_qs, quote, urlencode, urlparse, unquote
 from urllib.request import Request, urlopen
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -83,53 +85,14 @@ AUDIO_EXTENSIONS = (
     ".wma",
     ".wv",
 )
+ARCHIVE_EXTENSIONS = (
+    ".zip",
+    ".rar",
+)
 VIDEO_EXTENSION_SET = set(VIDEO_EXTENSIONS)
 AUDIO_EXTENSION_SET = set(AUDIO_EXTENSIONS)
-NON_MEDIA_EXTENSION_SET = {
-    ".ass", ".bmp", ".doc", ".docx", ".gif", ".ico", ".ini", ".jpeg", ".jpg",
-    ".json", ".log", ".lua", ".md", ".nfo", ".pdf", ".png", ".py", ".rtf",
-    ".srt", ".ssa", ".sub", ".svg", ".toml", ".txt", ".vtt", ".xml", ".yaml",
-    ".yml", ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".exe", ".dll",
-}
-_MEDIA_PROBE_CACHE: dict[str, bool] = {}
-
-
-def _probe_is_media_file(path: Path) -> bool:
-    cache_key = str(path.resolve())
-    cached = _MEDIA_PROBE_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
-    try:
-        flags = 0
-        if os.name == "nt":
-            flags = 0x08000000  # CREATE_NO_WINDOW
-        cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ]
-        completed = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            creationflags=flags,
-            timeout=2,
-            check=False,
-            text=True,
-        )
-        stream_types = {line.strip().lower() for line in (completed.stdout or "").splitlines()}
-        is_media = bool({"audio", "video"} & stream_types)
-    except Exception:
-        is_media = False
-    _MEDIA_PROBE_CACHE[cache_key] = is_media
-    if len(_MEDIA_PROBE_CACHE) > 4096:
-        _MEDIA_PROBE_CACHE.clear()
-    return is_media
+ARCHIVE_EXTENSION_SET = set(ARCHIVE_EXTENSIONS)
+ARCHIVE_SOURCE_SCHEME = "cadre-archive"
 
 
 def is_media_file(path: Path, include_audio: bool = True) -> bool:
@@ -139,6 +102,152 @@ def is_media_file(path: Path, include_audio: bool = True) -> bool:
     if ext in AUDIO_EXTENSION_SET:
         return bool(include_audio)
     return False
+
+
+def is_archive_file(path: Path) -> bool:
+    return path.suffix.lower() in ARCHIVE_EXTENSION_SET
+
+
+def is_playable_file(path: Path, include_audio: bool = True) -> bool:
+    return is_media_file(path, include_audio=include_audio) or is_archive_file(path)
+
+
+def make_archive_member_source(archive_path: Path | str, member_name: str) -> str:
+    archive = str(Path(archive_path).resolve())
+    return f"{ARCHIVE_SOURCE_SCHEME}:?src={quote(archive, safe='')}&entry={quote(str(member_name or ''), safe='')}"
+
+
+def is_archive_member_source(value: str) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme == ARCHIVE_SOURCE_SCHEME
+
+
+def parse_archive_member_source(value: str) -> tuple[str, str]:
+    if not is_archive_member_source(value):
+        return "", ""
+    parsed = urlparse(str(value or "").strip())
+    query = parse_qs(parsed.query)
+    archive_path = unquote(query.get("src", [""])[0].strip())
+    member_name = unquote(query.get("entry", [""])[0].strip())
+    return archive_path, member_name
+
+
+def list_archive_member_sources(path: Path, include_audio: bool = True) -> list[str]:
+    resolved = path.resolve()
+    if not is_archive_file(resolved):
+        return []
+    ext = resolved.suffix.lower()
+
+    if ext == ".zip":
+        sources = []
+        with zipfile.ZipFile(resolved) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+                member_path = Path(info.filename)
+                if is_media_file(member_path, include_audio=include_audio):
+                    sources.append(make_archive_member_source(resolved, info.filename))
+        return sources
+
+    if ext == ".rar":
+        tool = find_archive_backend_tool()
+        if not tool:
+            return []
+        run_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "timeout": 20,
+            "check": False,
+        }
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if flags:
+                run_kwargs["creationflags"] = flags
+        proc = subprocess.run([tool, "-tf", str(resolved)], **run_kwargs)
+        if proc.returncode != 0:
+            return []
+        sources = []
+        seen = set()
+        for raw_line in (proc.stdout or "").splitlines():
+            member_name = str(raw_line or "").strip()
+            if not member_name or member_name.endswith(("/", "\\")):
+                continue
+            if member_name in seen:
+                continue
+            seen.add(member_name)
+            if is_media_file(Path(member_name), include_audio=include_audio):
+                sources.append(make_archive_member_source(resolved, member_name))
+        return sources
+
+    return []
+
+
+def find_archive_backend_tool() -> str:
+    candidates = []
+    base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    for name in ("bsdtar.exe", "tar.exe", "bsdtar", "tar"):
+        candidates.extend([
+            str(base_dir / "vendor" / name),
+            str(base_dir / name),
+        ])
+    for name in ("bsdtar", "tar"):
+        resolved = shutil.which(name)
+        if resolved:
+            candidates.append(resolved)
+
+    seen = set()
+    for candidate in candidates:
+        token = str(candidate or "").strip()
+        if not token:
+            continue
+        norm = os.path.normcase(os.path.normpath(token))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if Path(token).exists():
+            return token
+    return ""
+
+
+def extract_archive_member_to_path(archive_path: str | Path, member_name: str, target_path: str | Path) -> None:
+    archive = Path(archive_path).resolve()
+    target = Path(target_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    ext = archive.suffix.lower()
+
+    if ext == ".zip":
+        with zipfile.ZipFile(archive) as payload:
+            with payload.open(member_name) as src, target.open("wb") as dst:
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+        return
+
+    if ext == ".rar":
+        tool = find_archive_backend_tool()
+        if not tool:
+            raise RuntimeError("No RAR extraction backend is available.")
+        run_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "timeout": 60,
+            "check": False,
+        }
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if flags:
+                run_kwargs["creationflags"] = flags
+        proc = subprocess.run([tool, "-xOf", str(archive), member_name], **run_kwargs)
+        if proc.returncode != 0:
+            detail = (proc.stderr or b"").decode(errors="replace").strip()
+            raise RuntimeError(detail or "RAR extraction failed.")
+        target.write_bytes(proc.stdout or b"")
+        return
+
+    raise RuntimeError("Unsupported archive type.")
 
 
 def is_audio_file(path: Path) -> bool:
@@ -189,6 +298,9 @@ def media_basename_from_source(source: str) -> str:
     source = str(source or "").strip()
     if not source:
         return "subtitle"
+    if is_archive_member_source(source):
+        _, member_name = parse_archive_member_source(source)
+        return Path(member_name).stem or "subtitle"
     parsed = urlparse(source)
     if parsed.scheme and parsed.netloc:
         name = unquote(Path(parsed.path).name)
@@ -644,14 +756,14 @@ def list_folder_media(folder: Path, recursive: bool = False, include_audio: bool
             filenames.sort(key=lambda f: f.lower())
             for filename in filenames:
                 full_path = Path(root) / filename
-                if is_media_file(full_path, include_audio=include_audio):
+                if is_playable_file(full_path, include_audio=include_audio):
                     all_media.append(str(full_path.resolve()))
         return all_media
     else:
         return [
             str(item.resolve())
             for item in sorted(folder.iterdir(), key=lambda p: p.name.lower())
-            if item.is_file() and is_media_file(item, include_audio=include_audio)
+            if item.is_file() and is_playable_file(item, include_audio=include_audio)
         ]
 
 def collect_paths(
@@ -674,7 +786,7 @@ def collect_paths(
 
     for path in paths:
         resolved = path.resolve()
-        if resolved.is_file() and is_media_file(resolved, include_audio=include_audio):
+        if resolved.is_file() and is_playable_file(resolved, include_audio=include_audio):
             files.append(str(resolved))
             pending_emit += 1
             maybe_emit()
@@ -685,13 +797,13 @@ def collect_paths(
                     filenames.sort(key=lambda f: f.lower())
                     for filename in filenames:
                         full_path = Path(root) / filename
-                        if is_media_file(full_path, include_audio=include_audio):
+                        if is_playable_file(full_path, include_audio=include_audio):
                             files.append(str(full_path.resolve()))
                             pending_emit += 1
                             maybe_emit()
             else:
                 for item in sorted(resolved.iterdir(), key=lambda p: p.name.lower()):
-                    if item.is_file() and is_media_file(item, include_audio=include_audio):
+                    if item.is_file() and is_playable_file(item, include_audio=include_audio):
                         files.append(str(item.resolve()))
                         pending_emit += 1
                         maybe_emit()
