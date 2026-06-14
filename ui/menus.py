@@ -111,6 +111,16 @@ def create_main_context_menu(player, pos):
     audio_options_menu = menu.addMenu(tr("Audio Options"))
     mute_action = audio_options_menu.addAction(tr("Mute / Unmute") + "\tM")
     mute_action.triggered.connect(player.toggle_mute)
+
+    audio_delay_down = audio_options_menu.addAction(tr("Audio Delay -0.1s") + "\tCtrl+-")
+    audio_delay_down.triggered.connect(lambda: player.adjust_audio_delay(-0.1))
+
+    audio_delay_up = audio_options_menu.addAction(tr("Audio Delay +0.1s") + "\tCtrl++")
+    audio_delay_up.triggered.connect(lambda: player.adjust_audio_delay(0.1))
+
+    audio_delay_reset = audio_options_menu.addAction(tr("Reset Audio Delay") + "\tCtrl+0")
+    audio_delay_reset.triggered.connect(lambda: player.adjust_audio_delay(0.0, absolute=True))
+
     audio_options_menu.addSeparator()
 
     # Audio Tracks
@@ -126,17 +136,18 @@ def create_main_context_menu(player, pos):
         audio_menu.setEnabled(False)
     else:
         for t in audio_tracks:
-            title = t.get('title') or t.get('lang') or f"Track {t['id']}"
+            raw_title = str(t.get('title') or "").strip()
+            raw_lang = str(t.get('lang') or "").strip()
+            title = raw_title or raw_lang or f"Track {t['id']}"
             action = audio_menu.addAction(title)
             action.setCheckable(True)
-            if t['selected']: action.setChecked(True)
+            if t.get('selected'):
+                action.setChecked(True)
             action.triggered.connect(lambda checked, tid=t['id']: player.select_audio_track(tid))
-
-    eq_action = audio_options_menu.addAction(tr("Equalizer") + "...")
-    eq_action.triggered.connect(player.open_equalizer_dialog)
 
     # Subtitle Options
     subtitle_options_menu = menu.addMenu(tr("Subtitle Options"))
+
     sub_tracks = [t for t in tracks if t['type'] == 'sub']
     sub_menu = subtitle_options_menu.addMenu(tr("Subtitle Tracks"))
     if not sub_tracks:
@@ -144,7 +155,7 @@ def create_main_context_menu(player, pos):
     else:
         none_action = sub_menu.addAction(tr("No Subtitles"))
         none_action.setCheckable(True)
-        if not any(t['selected'] for t in sub_tracks):
+        if not any(t.get('selected') for t in sub_tracks):
             none_action.setChecked(True)
         none_action.triggered.connect(lambda: player.select_subtitle_track("no"))
         
@@ -157,7 +168,8 @@ def create_main_context_menu(player, pos):
                 title = raw_title or raw_lang or f"Track {t['id']}"
             action = sub_menu.addAction(title)
             action.setCheckable(True)
-            if t['selected']: action.setChecked(True)
+            if t.get('selected'):
+                action.setChecked(True)
             action.triggered.connect(lambda checked, tid=t['id']: player.select_subtitle_track(tid))
 
     add_sub_action = subtitle_options_menu.addAction(tr("Add Subtitle File")+"...")

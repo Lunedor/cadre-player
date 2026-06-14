@@ -1010,7 +1010,9 @@ class PlaylistViewMixin:
             return
 
         if subtitle_files and not media_files and not folders and not direct_stream_urls:
-            if self.player.time_pos is not None:
+            if not getattr(self, "_mpv_ready", True) or getattr(self, "player", None) is None:
+                self.show_status_overlay(tr("Video backend is starting"))
+            elif self.player.time_pos is not None:
                 for sub in subtitle_files:
                     self.player.command("sub-add", sub)
                 self.show_status_overlay(tr("Subtitle(s) added"))
@@ -1067,6 +1069,9 @@ class PlaylistViewMixin:
         )
 
     def load_startup_paths(self, raw_paths):
+        if not getattr(self, "_mpv_ready", True):
+            self._pending_startup_paths = list(raw_paths or [])
+            return
         paths = [Path(p) for p in raw_paths if p]
         paths = [p for p in paths if p.exists()]
         if not paths:
@@ -1908,9 +1913,37 @@ class PlaylistViewMixin:
             return
 
         current_removed = self.current_index in indices
-        current_path = (
-            self.playlist[self.current_index] if 0 <= self.current_index < len(self.playlist) else None
-        )
+        playlist_len_before = len(self.playlist)
+        new_len = playlist_len_before - len(indices)
+
+        if new_len <= 0:
+            new_current_index = -1
+        elif self.current_index < 0 or self.current_index >= playlist_len_before:
+            new_current_index = -1
+        elif not current_removed:
+            # Shift current index by the number of deleted items before it
+            shift = sum(1 for idx in indices if idx < self.current_index)
+            new_current_index = self.current_index - shift
+        else:
+            # Playing item is removed. Find the next closest remaining item.
+            next_idx = -1
+            # Search forward
+            for j in range(self.current_index + 1, playlist_len_before):
+                if j not in indices:
+                    next_idx = j
+                    break
+            # Search backward
+            if next_idx == -1:
+                for j in range(self.current_index - 1, -1, -1):
+                    if j not in indices:
+                        next_idx = j
+                        break
+            
+            if next_idx == -1:
+                new_current_index = -1
+            else:
+                shift = sum(1 for idx in indices if idx < next_idx)
+                new_current_index = next_idx - shift
 
         removed_paths = []
         # Remove in reverse order
@@ -1922,18 +1955,16 @@ class PlaylistViewMixin:
 
         if not self.playlist:
             self.current_index = -1
-            self.player.stop()
+            if getattr(self, "player", None) is not None:
+                self.player.stop()
             self.setWindowTitle("Cadre Player")
             if hasattr(self, "title_bar"):
                 self.title_bar.info_label.setText("")
             self.seek_slider.set_current_time(0.0)
             self.seek_slider.set_chapters([])
             self.sync_size()
-        elif current_path and current_path in self.playlist:
-            self.current_index = self.playlist.index(current_path)
         else:
-            if self.current_index >= len(self.playlist):
-                self.current_index = len(self.playlist) - 1
+            self.current_index = new_current_index
             if current_removed and self.current_index >= 0:
                 self.play_current()
 

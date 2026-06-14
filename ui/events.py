@@ -35,8 +35,8 @@ from .icons import (
     icon_play,
     icon_prev_track,
     icon_repeat,
-    icon_restore,
     icon_shuffle,
+    icon_restore,
     icon_stop,
     icon_volume,
     icon_volume_muted,
@@ -46,9 +46,13 @@ from ..i18n import tr
 from ..mpv_power_config import ensure_mpv_power_user_layout
 from ..settings import (
     load_sub_delay_for_file,
+    load_audio_delay,
+    load_audio_delay_for_file,
     load_equalizer_settings,
     load_sub_settings,
     load_video_settings,
+    save_audio_delay,
+    save_audio_delay_for_file,
     save_import_include_audio,
     save_sub_delay_for_file,
     save_restore_session_on_startup,
@@ -80,6 +84,9 @@ def _is_youtube_url(url: str) -> bool:
 
 
 class UIEventsMixin:
+    def _has_mpv_player(self) -> bool:
+        return bool(getattr(self, "_mpv_ready", True) and getattr(self, "player", None) is not None)
+
     def _safe_player_float(self, attr: str, default: float = 0.0) -> float:
         try:
             raw = getattr(self.player, attr, None)
@@ -184,6 +191,9 @@ class UIEventsMixin:
         self.fullscreen_btn.setIcon(QIcon(pixmap))
 
     def on_volume_changed(self, value: int):
+        if not self._has_mpv_player():
+            self.saved_volume = value
+            return
         self.player.volume = value
         save_volume(value)
         self.show_status_overlay(tr("Volume: {}%").format(value))
@@ -1037,6 +1047,8 @@ class UIEventsMixin:
             return
 
     def toggle_play(self):
+        if not self._has_mpv_player():
+            return
         if self._full_duration_scan_active:
             self.show_status_overlay(tr("Duration scan is running (F4 to cancel)"))
             return
@@ -1056,6 +1068,12 @@ class UIEventsMixin:
 
     def toggle_mute(self):
         new_muted = not self._cached_muted
+        if not self._has_mpv_player():
+            self._cached_muted = new_muted
+            self.saved_muted = new_muted
+            save_muted(new_muted)
+            self.update_mute_icon()
+            return
         self.player.mute = new_muted
         self._cached_muted = new_muted
         save_muted(new_muted)
@@ -1756,6 +1774,58 @@ class UIEventsMixin:
                 )
         except (RuntimeError, TypeError, ValueError) as e:
             logging.debug("Failed to persist runtime subtitle settings: %s", e)
+
+    def apply_audio_settings(self):
+        """Load and apply audio delay (per-file or global fallback) to mpv."""
+        current_file = ""
+        if hasattr(self, "get_current_media_source"):
+            try:
+                current_file = str(self.get_current_media_source() or "")
+            except Exception:
+                current_file = ""
+        global_delay = load_audio_delay(0.0)
+        delay_val = load_audio_delay_for_file(current_file, global_delay) if current_file else global_delay
+        try:
+            self.player.audio_delay = float(delay_val)
+        except Exception:
+            try:
+                self.player.command("set", "audio-delay", str(float(delay_val)))
+            except Exception as e:
+                logging.debug("Failed to apply audio delay: %s", e)
+
+    def _persist_runtime_audio_settings(self):
+        try:
+            audio_delay = self.player.audio_delay
+            if audio_delay is None:
+                audio_delay = 0.0
+            save_audio_delay(float(audio_delay))
+            current_file = ""
+            if hasattr(self, "get_current_media_source"):
+                try:
+                    current_file = str(self.get_current_media_source() or "")
+                except Exception:
+                    current_file = ""
+            if current_file:
+                save_audio_delay_for_file(current_file, float(audio_delay))
+        except (RuntimeError, TypeError, ValueError) as e:
+            logging.debug("Failed to persist runtime audio settings: %s", e)
+
+    def adjust_audio_delay(self, delta: float, absolute: bool = False):
+        """Adjust audio delay by delta seconds, or set to delta if absolute=True."""
+        try:
+            if absolute:
+                self.player.audio_delay = float(delta)
+            else:
+                current = self.player.audio_delay or 0.0
+                self.player.audio_delay = float(current) + float(delta)
+            self._persist_runtime_audio_settings()
+            val = self.player.audio_delay
+            if absolute and delta == 0.0:
+                self.show_status_overlay(tr("Audio Delay: Reset"))
+            else:
+                self.show_status_overlay(tr("Audio Delay: {}s").format(f"{val:.1f}"))
+        except Exception as e:
+            logging.debug("adjust_audio_delay failed: %s", e)
 
     def apply_stream_quality_setting(self):
         # Reset cached per-URL quality lists to avoid stale results after runtime
@@ -2574,7 +2644,10 @@ class UIEventsMixin:
             return True
         return False
 
-    def _handle_zoom_shortcuts(self, key) -> bool:
+    def _handle_zoom_shortcuts(self, key, mods=None) -> bool:
+        # Skip zoom keys when Ctrl is held — those are audio sync shortcuts
+        if mods is not None and (mods & Qt.ControlModifier):
+            return False
         if key == Qt.Key_Plus or key == Qt.Key_Equal:
             self.window_zoom += 0.1
             self.show_status_overlay(tr("Zoom: {}").format(f"{self.window_zoom:.1f}"))
@@ -2743,6 +2816,20 @@ class UIEventsMixin:
             return True
         return False
 
+    def _handle_audio_sync_shortcuts(self, key, mods) -> bool:
+        if not (mods & Qt.ControlModifier):
+            return False
+        if key in (Qt.Key_Plus, Qt.Key_Equal):
+            self.adjust_audio_delay(0.1)
+            return True
+        if key == Qt.Key_Minus:
+            self.adjust_audio_delay(-0.1)
+            return True
+        if key == Qt.Key_0:
+            self.adjust_audio_delay(0.0, absolute=True)
+            return True
+        return False
+
     def keyPressEvent(self, event):
         key = event.key()
         mods = event.modifiers()
@@ -2755,7 +2842,9 @@ class UIEventsMixin:
             return
         if self._handle_transport_shortcuts(event, key):
             return
-        if self._handle_zoom_shortcuts(key):
+        if self._handle_audio_sync_shortcuts(key, mods):
+            return
+        if self._handle_zoom_shortcuts(key, mods):
             return
         if self._handle_pan_shortcuts(key):
             return

@@ -4,8 +4,16 @@ from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QColor, QBrush, QPainter, QPainterPath, QPixmap, QPen, QIcon, QFont, QPolygonF
 
 
+def _icon_pixmap(size: int) -> QPixmap:
+    try:
+        side = max(1, int(size))
+    except (TypeError, ValueError):
+        side = 18
+    return QPixmap(side, side)
+
+
 def icon_play(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -24,7 +32,7 @@ def icon_play(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
     return pm
 
 def icon_pause(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -45,7 +53,7 @@ def icon_pause(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
 
 
 def icon_prev_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
@@ -77,7 +85,7 @@ def icon_prev_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
 
 
 def icon_next_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
@@ -109,7 +117,7 @@ def icon_next_track(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
 
 
 def icon_volume(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -150,7 +158,7 @@ def icon_volume_muted(size: int = 18, color: QColor = QColor(235, 235, 235)) -> 
 
 
 def icon_playlist(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)
@@ -177,7 +185,7 @@ def icon_playlist(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPix
 
 def icon_shuffle(size: int = 18, color: QColor = QColor(235, 235, 235), off: bool = False) -> QPixmap:
 
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -208,7 +216,7 @@ def icon_shuffle(size: int = 18, color: QColor = QColor(235, 235, 235), off: boo
     return pm
 
 def icon_repeat(size: int = 18, color: QColor = QColor(235, 235, 235), one: bool = False, off: bool = False) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -237,7 +245,7 @@ def icon_repeat(size: int = 18, color: QColor = QColor(235, 235, 235), one: bool
     return pm
 
 def icon_close(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -254,7 +262,7 @@ def icon_close(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
 
 
 def icon_plus(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)
@@ -282,7 +290,7 @@ def icon_plus(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
 
 
 def icon_folder(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -299,7 +307,7 @@ def icon_folder(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixma
 
 
 def icon_minus(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -315,7 +323,7 @@ def icon_minus(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
 
 
 def icon_trash(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -336,7 +344,7 @@ def icon_trash(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap
 
 
 def icon_stop(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -351,7 +359,7 @@ def icon_stop(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
 
 
 def icon_sort(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -373,7 +381,7 @@ def icon_sort(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
 
 
 def icon_search(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -397,7 +405,7 @@ def icon_search(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixma
 
 
 def icon_save(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -420,7 +428,7 @@ def icon_save(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
 
 
 def icon_open_folder(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)
@@ -458,7 +466,7 @@ def icon_open_folder(size: int = 18, color: QColor = QColor(235, 235, 235)) -> Q
 
 
 def icon_maximize(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -472,7 +480,7 @@ def icon_maximize(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPix
 
 
 def icon_restore(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -492,7 +500,7 @@ def icon_restore(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixm
     return pm
 
 def icon_restore_playlist(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)
@@ -536,7 +544,7 @@ def icon_restore_playlist(size: int = 18, color: QColor = QColor(235, 235, 235))
     return pm
 
 def icon_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     painter = QPainter(pm)
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -569,7 +577,7 @@ def icon_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QP
 
 
 def icon_exit_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)
@@ -618,7 +626,7 @@ def icon_exit_fullscreen(size: int = 18, color: QColor = QColor(235, 235, 235)) 
     return pm
 
 def icon_settings(size: int = 18, color: QColor = QColor(235, 235, 235)) -> QPixmap:
-    pm = QPixmap(size, size)
+    pm = _icon_pixmap(size)
     pm.fill(Qt.transparent)
     
     painter = QPainter(pm)

@@ -127,6 +127,8 @@ SUB_BACK_STYLE_KEY = "sub/back_style"
 ASPECT_RATIO_KEY = "video/aspect_ratio"
 RESUME_POS_PREFIX = "resume/"
 SUB_DELAY_PER_FILE_PREFIX = "sub_delay/"
+AUDIO_DELAY_KEY = "audio/delay"
+AUDIO_DELAY_PER_FILE_PREFIX = "audio_delay/"
 PIN_CONTROLS_KEY = "player/pin_controls"
 PIN_PLAYLIST_KEY = "player/pin_playlist"
 
@@ -281,6 +283,36 @@ def load_sub_delay_for_file(file_path: str, default: float = 0.0) -> float:
         return float(default)
     settings = get_settings()
     val = settings.value(f"{SUB_DELAY_PER_FILE_PREFIX}{file_path}", float(default))
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def load_audio_delay(default: float = 0.0) -> float:
+    settings = get_settings()
+    return _to_float(settings.value(AUDIO_DELAY_KEY, default), default, -600.0, 600.0)
+
+
+def save_audio_delay(value: float) -> None:
+    settings = get_settings()
+    settings.setValue(AUDIO_DELAY_KEY, float(value))
+    settings.sync()
+
+
+def save_audio_delay_for_file(file_path: str, seconds: float) -> None:
+    if not file_path:
+        return
+    settings = get_settings()
+    settings.setValue(f"{AUDIO_DELAY_PER_FILE_PREFIX}{file_path}", float(seconds))
+    settings.sync()
+
+
+def load_audio_delay_for_file(file_path: str, default: float = 0.0) -> float:
+    if not file_path:
+        return float(default)
+    settings = get_settings()
+    val = settings.value(f"{AUDIO_DELAY_PER_FILE_PREFIX}{file_path}", float(default))
     try:
         return float(val)
     except (TypeError, ValueError):

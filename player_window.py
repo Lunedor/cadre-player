@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import subprocess
 import logging
@@ -12,8 +12,6 @@ import weakref
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 import time
-
-import mpv
 
 from PySide6.QtCore import QTimer, Qt, Signal, QPoint, QAbstractNativeEventFilter
 from PySide6.QtGui import QCursor, QIcon, QPixmap
@@ -43,6 +41,8 @@ from .settings import (
     load_resume_position,
     load_pinned_settings,
     load_stream_quality,
+    load_audio_delay,
+    load_audio_delay_for_file,
 )
 from .ui.icons import (
     icon_close,
@@ -256,7 +256,13 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         # Session-only toggle: do not persist Always-On-Top across relaunch.
         self.always_on_top = False
 
+        self.player = None
+        self._mpv_ready = False
+        self._mpv_initializing = False
+        self._pending_startup_paths = None
+
         v_config = load_video_settings()
+        self._video_config = v_config
         self.window_zoom = float(v_config.get("zoom", 0.0))
         self._video_rotate_deg = int(v_config.get("rotate", 0) or 0) % 360
         self._video_mirror_horizontal = bool(v_config.get("mirror_horizontal", False))
@@ -324,45 +330,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         layout.addWidget(text_label)
         self.background_widget.show()
 
-        self._power_user_paths = ensure_mpv_power_user_layout()
-        self._mpv_config_dir = self._power_user_paths["config_dir"]
-        self._mpv_conf_path = self._power_user_paths["mpv_conf_path"]
-        self._mpv_scripts_dir = self._power_user_paths["scripts_dir"]
-        mpv_conf_overrides = load_mpv_video_overrides(self._mpv_conf_path)
-        if mpv_conf_overrides:
-            v_config.update(mpv_conf_overrides)
-            save_video_settings(v_config)
-            self.window_zoom = float(v_config.get("zoom", 0.0))
-            self._video_rotate_deg = int(v_config.get("rotate", 0) or 0) % 360
-            self._video_mirror_horizontal = bool(v_config.get("mirror_horizontal", False))
-            self._video_mirror_vertical = bool(v_config.get("mirror_vertical", False))
-            self._seek_thumbnail_preview = bool(v_config.get("seek_thumbnail_preview", False))
-            logging.info("Applied video overrides from mpv.conf: %s", sorted(mpv_conf_overrides.keys()))
-        logging.info(
-            "MPV power-user config: dir=%s mpv_conf=%s scripts=%s",
-            self._mpv_config_dir,
-            self._mpv_conf_path,
-            self._mpv_scripts_dir,
-        )
-
-
-        self.player = mpv.MPV(
-            wid=str(int(self.video_container.winId())),
-            vo=v_config.get("renderer", "gpu"),
-            gpu_api=v_config.get("gpu_api", "auto"),
-            hwdec=v_config.get("hwdec", "auto-safe"),
-            hr_seek="yes",
-            input_cursor="yes",
-            input_vo_keyboard="yes",
-            start_event_thread=False,
-            config=True,
-            config_dir=self._mpv_config_dir,
-        )
-        self._set_mpv_property_safe("pause", True, allow_during_busy=True)
-        self._cached_paused = True
-        self.apply_stream_quality_setting()
-
-        QTimer.singleShot(500, self._apply_mpv_startup_commands)
         self.overlay = OverlayWindow(self)
         self.speed_overlay = PillOverlayWindow(self)
         self.playlist_overlay = OverlayWindow(self)
@@ -379,18 +346,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.playlist_auto_hide_timer.setSingleShot(True)
         self.playlist_auto_hide_timer.setInterval(3000) # 3 second delay
         self.playlist_auto_hide_timer.timeout.connect(self.playlist_overlay.hide)
-
-        try:
-            # Disabled for stability: python-mpv event.as_dict() has been causing
-            # native crashes in long sessions with rapid track changes.
-            if self._mpv_event_callback_enabled:
-                self.player.register_event_callback(self._on_mpv_event)
-            self.apply_subtitle_settings()
-            self.apply_video_settings()
-            self.set_aspect_ratio(self._aspect_ratio_setting)
-            self.apply_equalizer_settings()
-        except Exception:
-            pass
 
         self.setup_ui()
         self.setup_playlist_ui()
@@ -438,6 +393,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             if app is not None:
                 self._native_media_event_filter = _WindowsMediaNativeEventFilter(self)
                 app.installNativeEventFilter(self._native_media_event_filter)
+
+        QTimer.singleShot(0, self._initialize_mpv_backend)
 
     # Explicit UI-event overrides to ensure Qt dispatch reaches UIEventsMixin.
     def eventFilter(self, obj, event):
@@ -547,6 +504,88 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
     def dropEvent(self, event):
         return UIEventsMixin.dropEvent(self, event)
 
+    def _initialize_mpv_backend(self):
+        if self._mpv_ready or self._mpv_initializing or self._is_shutting_down:
+            return
+        self._mpv_initializing = True
+        try:
+            import mpv
+
+            v_config = self._video_config
+            self._power_user_paths = ensure_mpv_power_user_layout()
+            self._mpv_config_dir = self._power_user_paths["config_dir"]
+            self._mpv_conf_path = self._power_user_paths["mpv_conf_path"]
+            self._mpv_scripts_dir = self._power_user_paths["scripts_dir"]
+            mpv_conf_overrides = load_mpv_video_overrides(self._mpv_conf_path)
+            if mpv_conf_overrides:
+                v_config.update(mpv_conf_overrides)
+                save_video_settings(v_config)
+                self.window_zoom = float(v_config.get("zoom", 0.0))
+                self._video_rotate_deg = int(v_config.get("rotate", 0) or 0) % 360
+                self._video_mirror_horizontal = bool(v_config.get("mirror_horizontal", False))
+                self._video_mirror_vertical = bool(v_config.get("mirror_vertical", False))
+                self._seek_thumbnail_preview = bool(v_config.get("seek_thumbnail_preview", False))
+                logging.info("Applied video overrides from mpv.conf: %s", sorted(mpv_conf_overrides.keys()))
+            logging.info(
+                "MPV power-user config: dir=%s mpv_conf=%s scripts=%s",
+                self._mpv_config_dir,
+                self._mpv_conf_path,
+                self._mpv_scripts_dir,
+            )
+
+            self.player = mpv.MPV(
+                wid=str(int(self.video_container.winId())),
+                vo=v_config.get("renderer", "gpu"),
+                gpu_api=v_config.get("gpu_api", "auto"),
+                hwdec=v_config.get("hwdec", "auto-safe"),
+                hr_seek="yes",
+                input_cursor="yes",
+                input_vo_keyboard="yes",
+                start_event_thread=False,
+                config=True,
+                config_dir=self._mpv_config_dir,
+            )
+            self._mpv_ready = True
+            self._set_mpv_property_safe("pause", True, allow_during_busy=True)
+            self._cached_paused = True
+            self.player.volume = self.saved_volume
+            self.player.mute = self.saved_muted
+            self._cached_muted = bool(self.saved_muted)
+            self.apply_stream_quality_setting()
+
+            try:
+                # Disabled for stability: python-mpv event.as_dict() has been causing
+                # native crashes in long sessions with rapid track changes.
+                if self._mpv_event_callback_enabled:
+                    self.player.register_event_callback(self._on_mpv_event)
+                self.apply_subtitle_settings()
+                self.apply_audio_settings()
+                self.apply_video_settings()
+                self.set_aspect_ratio(self._aspect_ratio_setting)
+                self.apply_equalizer_settings()
+            except Exception:
+                pass
+
+            QTimer.singleShot(500, self._apply_mpv_startup_commands)
+            pending_startup_paths = self._pending_startup_paths
+            self._pending_startup_paths = None
+            if pending_startup_paths is not None:
+                QTimer.singleShot(
+                    0,
+                    lambda paths=list(pending_startup_paths): self.load_startup_paths(paths),
+                )
+        except Exception:
+            logging.exception("MPV backend initialization failed")
+            self.show_status_overlay(tr("Video backend failed to start"))
+        finally:
+            self._mpv_initializing = False
+
+    def _backend_ready_for_playback(self) -> bool:
+        if self._mpv_ready and self.player is not None:
+            return True
+        self._initialize_mpv_backend()
+        return self._mpv_ready and self.player is not None
+
     def _apply_mpv_startup_commands(self):
         # Keep startup hook for diagnostics only.
         # Do not override power-user mpv.conf values here.
@@ -554,6 +593,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
     def _can_write_mpv_property(self, allow_during_busy: bool = False) -> bool:
         if self._is_shutting_down:
+            return False
+        if self.player is None:
             return False
         if allow_during_busy:
             return True
@@ -727,8 +768,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self.vol_slider.valueChanged.connect(self.on_volume_changed)
         popup_layout.addWidget(self.vol_slider, 1, Qt.AlignHCenter)
 
-        self.player.volume = self.saved_volume
-        self.player.mute = self.saved_muted
+        if self.player is not None:
+            self.player.volume = self.saved_volume
+            self.player.mute = self.saved_muted
         self._cached_muted = bool(self.saved_muted)
 
         layout = QHBoxLayout(self.overlay.panel)
@@ -1606,6 +1648,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             return
         if self._is_shutting_down:
             return
+        if not self._backend_ready_for_playback():
+            return
         if not (0 <= self.current_index < len(self.playlist)):
             return
         now = time.monotonic()
@@ -1682,6 +1726,8 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 )
 
     def stop_playback(self):
+        if not self._backend_ready_for_playback():
+            return
         self.save_current_resume_info()
         # Ensure stop never triggers a deferred auto-next transition.
         self._pending_auto_next = False
@@ -1742,5 +1788,6 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             self._cached_paused = False
             # mpv may reset subtitle runtime props on new file load.
             QTimer.singleShot(0, self.apply_subtitle_settings)
+            QTimer.singleShot(0, self.apply_audio_settings)
             # Re-apply runtime video transforms that can be reset on file load.
             QTimer.singleShot(0, self._apply_video_mirror_filters)

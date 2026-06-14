@@ -45,6 +45,7 @@ It is focused on:
 - OpenSubtitles.com integration (search + download + apply in-app, `Shift+S`)
 - Downloaded subtitles are stored per media in `%APPDATA%\CadrePlayer\subtitles\` and auto-loaded on replay
 - Subtitle delay is saved per file (instead of one global delay)
+- Audio sync delay controls are saved per file, with a global fallback for new media
 - Video geometry tools: rotation + mirror horizontal/vertical (X/Y shortcuts)
 - On-demand technical stats overlay via mpv `stats.lua` (`Shift+I`)
 - Power-user mpv integration: app-managed `mpv.conf` + `scripts/` (Lua/JS auto-loaded)
@@ -135,6 +136,9 @@ python main.py
 | Ctrl+R | Reset rotation |
 | X | Toggle mirror horizontal |
 | Y | Toggle mirror vertical |
+| Ctrl++ | Audio delay +0.1s |
+| Ctrl+- | Audio delay -0.1s |
+| Ctrl+0 | Reset audio delay |
 | B | Increase brightness |
 | Shift+B | Decrease brightness |
 | G | Subtitle delay -0.1s |
@@ -145,6 +149,16 @@ python main.py
 | I | Subtitle position +1 |
 | Shift+S | Open OpenSubtitles dialog |
 | Shift+I | Toggle mpv technical stats overlay (`stats/display-stats-toggle`) |
+
+## Playback Sync
+
+Audio delay is available from the audio options menu and keyboard shortcuts:
+
+- `Ctrl++`: delay audio by +0.1s
+- `Ctrl+-`: advance audio by -0.1s
+- `Ctrl+0`: reset audio delay to 0.0s
+
+Cadre Player stores audio delay per media item, so a file that needs sync correction keeps that correction next time it is opened. The global audio delay setting is used as the fallback for media without a saved per-file value.
 
 ## mpv Power-User Config
 

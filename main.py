@@ -119,6 +119,15 @@ def _log_runtime_tool_diagnostics() -> None:
     logging.info("Runtime tool yt-dlp cli=%s", _probe_tool_version("yt-dlp"))
 
 
+def _start_runtime_tool_diagnostics_thread() -> None:
+    worker = threading.Thread(
+        target=_log_runtime_tool_diagnostics,
+        name="runtime-tool-diagnostics",
+        daemon=True,
+    )
+    worker.start()
+
+
 def _prepend_runtime_paths() -> None:
     base_dir = _runtime_base_dir()
     candidates = [str(base_dir), str(base_dir / "vendor")]
@@ -144,7 +153,7 @@ def run() -> int:
     configure_windows_dlls(_HERE)
 
     # Deferred imports: must come AFTER bootstrap has patched the DLL search
-    # path, otherwise `import mpv` inside player_window fires too early.
+    # path. player_window lazily imports mpv after the Qt shell is visible.
     if __package__ in (None, ""):
         from cadre_player.i18n import setup_i18n
         from cadre_player.app_logging import setup_app_logging
@@ -155,7 +164,7 @@ def run() -> int:
         from .player_window import ProOverlayPlayer
 
     setup_app_logging()
-    _log_runtime_tool_diagnostics()
+    _start_runtime_tool_diagnostics_thread()
     setup_i18n()
 
     app = QApplication(sys.argv)
