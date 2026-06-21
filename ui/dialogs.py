@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QComboBox, QSlider, QPushButton, QGroupBox, QFormLayout, QLineEdit,
-    QCheckBox, QListWidget, QListWidgetItem, QMessageBox, QListView, QSizePolicy
+    QCheckBox, QListWidget, QListWidgetItem, QMessageBox, QListView, QSizePolicy,
+    QFileDialog, QScrollArea, QApplication, QWidget,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QStandardPaths
 from PySide6.QtGui import QIntValidator
 import re
 from .styles import DIALOG_STYLE
@@ -13,6 +14,8 @@ from ..settings import (
     load_video_settings, save_video_settings,
     load_aspect_ratio, save_aspect_ratio,
     load_equalizer_settings, save_equalizer_settings,
+    load_audio_normalize, save_audio_normalize,
+    _get_default_screenshot_dir,
     save_sub_delay_for_file,
     load_stream_auth_settings, save_stream_auth_settings,
     load_opensubtitles_settings, save_opensubtitles_settings,
@@ -28,6 +31,34 @@ FALLBACK_OS_LANG_CODES = [
     "sk", "bg", "hr", "sr", "sl", "et", "lv", "lt", "id", "ms", "th", "vi",
     "hi", "bn", "fa", "ur",
 ]
+
+
+def make_choice_combo(combo: QComboBox, displayed_options: list[str], current_value: str):
+    combo.clear()
+    custom_index = None
+
+    for option in displayed_options:
+        combo.addItem(option, option)
+
+    if current_value and current_value not in displayed_options:
+        display = f"{current_value} ({tr('custom')})"
+        combo.addItem(display, current_value)
+        custom_index = combo.count() - 1
+        item = combo.model().item(custom_index)
+        if item is not None:
+            item.setEnabled(False)
+
+    if custom_index is not None:
+        combo.setCurrentIndex(custom_index)
+    else:
+        default_index = 0
+        for i in range(combo.count()):
+            if combo.itemData(i) == current_value:
+                default_index = i
+                break
+        combo.setCurrentIndex(default_index)
+
+    return combo
 
 class SubtitleSettingsDialog(QDialog):
     def __init__(self, player_window, parent=None):
@@ -199,10 +230,18 @@ class VideoSettingsDialog(QDialog):
         self.setStyleSheet(DIALOG_STYLE)
         
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         config = load_video_settings()
+
+        # Use a scroll area so the dialog fits smaller screens
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setSpacing(15)
+        content_layout.setContentsMargins(24, 24, 24, 24)
 
         # Engine Group
         engine_group = QGroupBox(tr("Performance"))
@@ -238,7 +277,128 @@ class VideoSettingsDialog(QDialog):
                 break
         self.gpu_api_combo.currentIndexChanged.connect(self.update_video)
         engine_layout.addRow(tr("GPU API") + ":", self.gpu_api_combo)
-        layout.addWidget(engine_group)
+        content_layout.addWidget(engine_group)
+
+        # Upscaling Group
+        upscale_group = QGroupBox(tr("Upscaling"))
+        upscale_layout = QFormLayout(upscale_group)
+        upscale_layout.setContentsMargins(15, 20, 15, 15)
+
+        scale_options = [
+            "bilinear",
+            "lanczos",
+            "spline36",
+            "spline64",
+            "ewa_lanczos",
+            "ewa_lanczossharp",
+            "ewa_lanczos4sharpest",
+        ]
+        self.scale_combo = QComboBox()
+        make_choice_combo(self.scale_combo, scale_options, config.get("scale", "ewa_lanczossharp"))
+        self.scale_combo.currentIndexChanged.connect(self.update_video)
+        upscale_layout.addRow(tr("Scale") + ":", self.scale_combo)
+
+        self.cscale_combo = QComboBox()
+        make_choice_combo(self.cscale_combo, scale_options, config.get("cscale", "ewa_lanczossharp"))
+        self.cscale_combo.currentIndexChanged.connect(self.update_video)
+        upscale_layout.addRow(tr("Chroma Scale") + ":", self.cscale_combo)
+
+        dscale_options = ["bilinear", "mitchell", "hermite", "lanczos", "spline36"]
+        self.dscale_combo = QComboBox()
+        make_choice_combo(self.dscale_combo, dscale_options, config.get("dscale", "mitchell"))
+        self.dscale_combo.currentIndexChanged.connect(self.update_video)
+        upscale_layout.addRow(tr("Downscale") + ":", self.dscale_combo)
+
+        content_layout.addWidget(upscale_group)
+
+        # Debanding Group
+        deband_group = QGroupBox(tr("Debanding"))
+        deband_layout = QFormLayout(deband_group)
+        deband_layout.setContentsMargins(15, 20, 15, 15)
+
+        self.deband_check = QCheckBox(tr("Deband"))
+        self.deband_check.setChecked(bool(config.get("deband", True)))
+        self.deband_check.toggled.connect(self._update_deband_enabled)
+        deband_layout.addRow(self.deband_check)
+
+        self.deband_iterations_slider = QSlider(Qt.Horizontal)
+        self.deband_iterations_slider.setRange(1, 4)
+        self.deband_iterations_slider.setValue(config.get("deband_iterations", 2))
+        self.deband_iterations_label = QLabel(str(self.deband_iterations_slider.value()))
+        self.deband_iterations_slider.valueChanged.connect(lambda v: (self.deband_iterations_label.setText(str(v)), self.update_video()))
+        it_layout = QHBoxLayout()
+        it_layout.addWidget(self.deband_iterations_slider)
+        it_layout.addWidget(self.deband_iterations_label)
+        deband_layout.addRow(tr("Iterations") + ":", it_layout)
+
+        self.deband_threshold_slider = QSlider(Qt.Horizontal)
+        self.deband_threshold_slider.setRange(0, 128)
+        self.deband_threshold_slider.setValue(config.get("deband_threshold", 48))
+        self.deband_threshold_label = QLabel(str(self.deband_threshold_slider.value()))
+        self.deband_threshold_slider.valueChanged.connect(lambda v: (self.deband_threshold_label.setText(str(v)), self.update_video()))
+        th_layout = QHBoxLayout()
+        th_layout.addWidget(self.deband_threshold_slider)
+        th_layout.addWidget(self.deband_threshold_label)
+        deband_layout.addRow(tr("Threshold") + ":", th_layout)
+
+        self.deband_range_slider = QSlider(Qt.Horizontal)
+        self.deband_range_slider.setRange(1, 64)
+        self.deband_range_slider.setValue(config.get("deband_range", 16))
+        self.deband_range_label = QLabel(str(self.deband_range_slider.value()))
+        self.deband_range_slider.valueChanged.connect(lambda v: (self.deband_range_label.setText(str(v)), self.update_video()))
+        rg_layout = QHBoxLayout()
+        rg_layout.addWidget(self.deband_range_slider)
+        rg_layout.addWidget(self.deband_range_label)
+        deband_layout.addRow(tr("Range") + ":", rg_layout)
+
+        content_layout.addWidget(deband_group)
+
+        # HDR / Tone Mapping Group
+        tone_group = QGroupBox(tr("HDR / Tone Mapping"))
+        tone_layout = QFormLayout(tone_group)
+        tone_layout.setContentsMargins(15, 20, 15, 15)
+
+        tone_options = ["auto", "spline", "bt.2390", "bt.2446a", "st2094_40", "mobius"]
+        self.tone_combo = QComboBox()
+        make_choice_combo(self.tone_combo, tone_options, config.get("tone_mapping", "auto"))
+        self.tone_combo.currentIndexChanged.connect(self.update_video)
+        tone_layout.addRow(tr("Tone Mapping") + ":", self.tone_combo)
+
+        content_layout.addWidget(tone_group)
+
+        # Audio Normalize Group
+        audio_group = QGroupBox(tr("Audio"))
+        audio_layout = QFormLayout(audio_group)
+        audio_layout.setContentsMargins(15, 20, 15, 15)
+
+        self.normalize_check = QCheckBox(tr("Normalize Volume"))
+        self.normalize_check.setChecked(bool(config.get("audio_normalize", False)))
+        self.normalize_check.toggled.connect(self.update_video)
+        audio_layout.addRow(self.normalize_check)
+
+        audio_filter = getattr(self.player_window, "_mpv_conf_audio_filter", "") or ""
+        audio_filter = str(audio_filter).strip()
+        if audio_filter and audio_filter.lower() != "loudnorm":
+            audio_filter_label = QLabel(
+                tr("Custom mpv.conf audio filter: {}") .format(audio_filter)
+            )
+            audio_filter_label.setWordWrap(True)
+            audio_filter_label.setStyleSheet("color: #888888;")
+            audio_layout.addRow(audio_filter_label)
+
+        content_layout.addWidget(audio_group)
+
+        # Screenshot Folder Group
+        screenshot_group = QGroupBox(tr("Screenshots"))
+        screenshot_layout = QHBoxLayout(screenshot_group)
+        screenshot_layout.setContentsMargins(15, 15, 15, 15)
+        self.screenshot_dir_edit = QLineEdit(config.get("screenshot_dir", _get_default_screenshot_dir()))
+        self.screenshot_dir_edit.editingFinished.connect(self.update_video)
+        self.browse_screenshot_btn = QPushButton(tr("Browse"))
+        self.browse_screenshot_btn.clicked.connect(self.browse_screenshot_dir)
+        screenshot_layout.addWidget(self.screenshot_dir_edit)
+        screenshot_layout.addWidget(self.browse_screenshot_btn)
+        content_layout.addWidget(screenshot_group)
 
         # Image Adjust Group
         adjust_group = QGroupBox(tr("Image Adjustments"))
@@ -248,28 +408,49 @@ class VideoSettingsDialog(QDialog):
         self.bright_slider = QSlider(Qt.Horizontal)
         self.bright_slider.setRange(-100, 100)
         self.bright_slider.setValue(config["brightness"])
-        self.bright_slider.valueChanged.connect(self.update_video)
-        adjust_layout.addRow(tr("Brightness") + ":", self.bright_slider)
+        self.bright_label = QLabel(str(self.bright_slider.value()))
+        self.bright_slider.valueChanged.connect(lambda v: (self.bright_label.setText(str(v)), self.update_video()))
+        bright_row = QHBoxLayout()
+        bright_row.addWidget(self.bright_slider)
+        bright_row.addWidget(self.bright_label)
+        adjust_layout.addRow(tr("Brightness") + ":", bright_row)
 
         self.contrast_slider = QSlider(Qt.Horizontal)
         self.contrast_slider.setRange(-100, 100)
         self.contrast_slider.setValue(config["contrast"])
-        self.contrast_slider.valueChanged.connect(self.update_video)
-        adjust_layout.addRow(tr("Contrast") + ":", self.contrast_slider)
+        self.contrast_label = QLabel(str(self.contrast_slider.value()))
+        self.contrast_slider.valueChanged.connect(lambda v: (self.contrast_label.setText(str(v)), self.update_video()))
+        contrast_row = QHBoxLayout()
+        contrast_row.addWidget(self.contrast_slider)
+        contrast_row.addWidget(self.contrast_label)
+        adjust_layout.addRow(tr("Contrast") + ":", contrast_row)
 
         self.sat_slider = QSlider(Qt.Horizontal)
         self.sat_slider.setRange(-100, 100)
         self.sat_slider.setValue(config["saturation"])
-        self.sat_slider.valueChanged.connect(self.update_video)
-        adjust_layout.addRow(tr("Saturation") + ":", self.sat_slider)
+        self.sat_label = QLabel(str(self.sat_slider.value()))
+        self.sat_slider.valueChanged.connect(lambda v: (self.sat_label.setText(str(v)), self.update_video()))
+        sat_row = QHBoxLayout()
+        sat_row.addWidget(self.sat_slider)
+        sat_row.addWidget(self.sat_label)
+        adjust_layout.addRow(tr("Saturation") + ":", sat_row)
 
         self.gamma_slider = QSlider(Qt.Horizontal)
         self.gamma_slider.setRange(-100, 100)
         self.gamma_slider.setValue(config["gamma"])
-        self.gamma_slider.valueChanged.connect(self.update_video)
-        adjust_layout.addRow(tr("Gamma") + ":", self.gamma_slider)
+        self.gamma_label = QLabel(str(self.gamma_slider.value()))
+        self.gamma_slider.valueChanged.connect(lambda v: (self.gamma_label.setText(str(v)), self.update_video()))
+        gamma_row = QHBoxLayout()
+        gamma_row.addWidget(self.gamma_slider)
+        gamma_row.addWidget(self.gamma_label)
+        adjust_layout.addRow(tr("Gamma") + ":", gamma_row)
 
-        layout.addWidget(adjust_group)
+        # Reset Image adjustments button
+        self.reset_image_btn = QPushButton(tr("Reset Image"))
+        self.reset_image_btn.clicked.connect(self.reset_image_adjustments)
+        adjust_layout.addRow("", self.reset_image_btn)
+
+        content_layout.addWidget(adjust_group)
 
         # Geometry Group
         geo_group = QGroupBox(tr("Geometry"))
@@ -328,7 +509,7 @@ class VideoSettingsDialog(QDialog):
         self.seek_thumb_check.toggled.connect(self.update_video)
         geo_layout.addRow(self.seek_thumb_check)
 
-        layout.addWidget(geo_group)
+        content_layout.addWidget(geo_group)
 
         # Footer Buttons
         btn_layout = QHBoxLayout()
@@ -344,7 +525,42 @@ class VideoSettingsDialog(QDialog):
         done_btn.clicked.connect(self.accept)
         btn_layout.addWidget(done_btn)
         
-        layout.addLayout(btn_layout)
+        content_layout.addLayout(btn_layout)
+
+        # finalize scroll area
+        scroll.setWidget(content)
+        # Prefer vertical scrolling only; avoid horizontal scrollbar
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Try to match the dialog height to the player window if available
+        try:
+            if self.player_window is not None:
+                win_h = int(self.player_window.height() or 0)
+                if win_h > 200:
+                    scroll.setMaximumHeight(win_h - 40)
+            else:
+                screen_h = QApplication.primaryScreen().availableGeometry().height()
+                scroll.setMaximumHeight(int(screen_h * 0.8))
+        except Exception:
+            pass
+
+        layout.addWidget(scroll)
+
+    def reset_image_adjustments(self):
+        """Reset only the image adjustment sliders and labels."""
+        self.bright_slider.setValue(0)
+        self.contrast_slider.setValue(0)
+        self.sat_slider.setValue(0)
+        self.gamma_slider.setValue(0)
+        # Update labels explicitly (valueChanged handlers also update them)
+        try:
+            self.bright_label.setText(str(self.bright_slider.value()))
+            self.contrast_label.setText(str(self.contrast_slider.value()))
+            self.sat_label.setText(str(self.sat_slider.value()))
+            self.gamma_label.setText(str(self.gamma_slider.value()))
+        except Exception:
+            pass
+        self.update_video()
 
     def adjust_zoom(self, delta):
         val = float(self.zoom_label.text())
@@ -367,7 +583,30 @@ class VideoSettingsDialog(QDialog):
         self.hwdec_combo.setCurrentText("auto-safe")
         self.renderer_combo.setCurrentIndex(0)
         self.gpu_api_combo.setCurrentIndex(0)
+        self.scale_combo.setCurrentIndex(0)
+        self.cscale_combo.setCurrentIndex(0)
+        self.dscale_combo.setCurrentIndex(0)
+        self.deband_check.setChecked(True)
+        self.deband_iterations_slider.setValue(2)
+        self.deband_threshold_slider.setValue(48)
+        self.deband_range_slider.setValue(16)
+        self.tone_combo.setCurrentIndex(0)
+        self.normalize_check.setChecked(False)
+        self.screenshot_dir_edit.setText(_get_default_screenshot_dir())
+        self._update_deband_enabled(True)
         self.update_video()
+
+    def _update_deband_enabled(self, enabled: bool):
+        self.deband_iterations_slider.setEnabled(enabled)
+        self.deband_threshold_slider.setEnabled(enabled)
+        self.deband_range_slider.setEnabled(enabled)
+        self.update_video()
+
+    def browse_screenshot_dir(self):
+        path = QFileDialog.getExistingDirectory(self, tr("Select Screenshot Folder"), self.screenshot_dir_edit.text())
+        if path:
+            self.screenshot_dir_edit.setText(path)
+            self.update_video()
 
     def update_video(self):
         rotate_idx = self.rotate_combo.currentIndex()
@@ -376,6 +615,15 @@ class VideoSettingsDialog(QDialog):
         if aspect_val == tr("auto"):
             aspect_val = "auto"
             
+        audio_filter = ""
+        if hasattr(self.player_window, "_mpv_conf_audio_filter"):
+            audio_filter = str(self.player_window._mpv_conf_audio_filter or "").strip()
+
+        if self.normalize_check.isChecked():
+            audio_filter = "loudnorm"
+        elif audio_filter.lower() == "loudnorm":
+            audio_filter = ""
+
         config = {
             "brightness": self.bright_slider.value(),
             "contrast": self.contrast_slider.value(),
@@ -389,12 +637,24 @@ class VideoSettingsDialog(QDialog):
             "hwdec": self.hwdec_combo.currentText(),
             "renderer": self.renderer_combo.currentData(),
             "gpu_api": self.gpu_api_combo.currentData(),
+            "scale": self.scale_combo.currentData(),
+            "cscale": self.cscale_combo.currentData(),
+            "dscale": self.dscale_combo.currentData(),
+            "deband": self.deband_check.isChecked(),
+            "deband_iterations": self.deband_iterations_slider.value(),
+            "deband_threshold": self.deband_threshold_slider.value(),
+            "deband_range": self.deband_range_slider.value(),
+            "tone_mapping": self.tone_combo.currentData(),
+            "audio_normalize": self.normalize_check.isChecked(),
+            "audio_filter": audio_filter,
+            "screenshot_dir": self.screenshot_dir_edit.text().strip(),
         }
         save_video_settings(config)
         save_aspect_ratio(aspect_val)
 
         self.player_window.apply_video_settings()
-        self.player_window.set_aspect_ratio(aspect_val)
+        # Suppress toast when updating aspect from the settings dialog
+        self.player_window.set_aspect_ratio(aspect_val, show_toast=False)
 
 
 class URLInputDialog(QDialog):

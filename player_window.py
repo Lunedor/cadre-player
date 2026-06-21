@@ -517,6 +517,9 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
             self._mpv_conf_path = self._power_user_paths["mpv_conf_path"]
             self._mpv_scripts_dir = self._power_user_paths["scripts_dir"]
             mpv_conf_overrides = load_mpv_video_overrides(self._mpv_conf_path)
+            self._mpv_conf_audio_filter = mpv_conf_overrides.get("audio_filter", "")
+            if self._mpv_conf_audio_filter.strip().lower() == "loudnorm":
+                v_config["audio_normalize"] = True
             if mpv_conf_overrides:
                 v_config.update(mpv_conf_overrides)
                 save_video_settings(v_config)
@@ -561,7 +564,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 self.apply_subtitle_settings()
                 self.apply_audio_settings()
                 self.apply_video_settings()
-                self.set_aspect_ratio(self._aspect_ratio_setting)
+                self.set_aspect_ratio(self._aspect_ratio_setting, show_toast=False)
                 self.apply_equalizer_settings()
             except Exception:
                 pass

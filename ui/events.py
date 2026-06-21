@@ -48,6 +48,7 @@ from ..settings import (
     load_sub_delay_for_file,
     load_audio_delay,
     load_audio_delay_for_file,
+    load_audio_normalize,
     load_equalizer_settings,
     load_sub_settings,
     load_video_settings,
@@ -1081,7 +1082,8 @@ class UIEventsMixin:
         status = tr("Muted") if new_muted else tr("Unmuted")
         self.show_status_overlay(status)
 
-    def set_aspect_ratio(self, ratio_str):
+    def set_aspect_ratio(self, ratio_str, show_toast: bool = True):
+        """Set aspect ratio; `show_toast=False` suppresses status overlay for programmatic changes."""
         self._aspect_ratio_setting = str(ratio_str or "auto")
         try:
             if ratio_str == "auto":
@@ -1090,7 +1092,8 @@ class UIEventsMixin:
                 self._set_mpv_property_safe("video_aspect_override", ratio_str, allow_during_busy=True)
 
             save_aspect_ratio(ratio_str)
-            self.show_status_overlay(tr("Aspect: {}").format(ratio_str))
+            if show_toast:
+                self.show_status_overlay(tr("Aspect: {}").format(ratio_str))
             QTimer.singleShot(50, self.sync_size)
         except (TypeError, ValueError, RuntimeError) as e:
             logging.warning("Error setting aspect ratio: %s", e)
@@ -1184,6 +1187,15 @@ class UIEventsMixin:
             self._safe_set_player_attr("vo", renderer)
             self._safe_set_player_attr("gpu_api", gpu_api)
             self._safe_set_player_attr("hwdec", hwdec)
+            self._set_mpv_property_safe("scale", config.get("scale", "ewa_lanczossharp"), allow_during_busy=True)
+            self._set_mpv_property_safe("cscale", config.get("cscale", "ewa_lanczossharp"), allow_during_busy=True)
+            self._set_mpv_property_safe("dscale", config.get("dscale", "mitchell"), allow_during_busy=True)
+            self._set_mpv_property_safe("deband", config.get("deband", True), allow_during_busy=True)
+            self._set_mpv_property_safe("deband_iterations", config.get("deband_iterations", 2), allow_during_busy=True)
+            self._set_mpv_property_safe("deband_threshold", config.get("deband_threshold", 48), allow_during_busy=True)
+            self._set_mpv_property_safe("deband_range", config.get("deband_range", 16), allow_during_busy=True)
+            self._set_mpv_property_safe("tone_mapping", config.get("tone_mapping", "auto"), allow_during_busy=True)
+            self._set_mpv_property_safe("screenshot_directory", config.get("screenshot_dir", ""), allow_during_busy=True)
             if hasattr(self, "seek_slider"):
                 self.seek_slider.set_preview_enabled(self._seek_thumbnail_preview)
             if not self._seek_thumbnail_preview and hasattr(self, "hide_seek_thumbnail_preview"):
@@ -1792,6 +1804,19 @@ class UIEventsMixin:
                 self.player.command("set", "audio-delay", str(float(delay_val)))
             except Exception as e:
                 logging.debug("Failed to apply audio delay: %s", e)
+
+        try:
+            normalize = load_audio_normalize(False)
+            audio_filter = getattr(self, "_mpv_conf_audio_filter", "") or ""
+            if normalize:
+                self.player.af = "loudnorm"
+            else:
+                if audio_filter.strip() and audio_filter.strip().lower() != "loudnorm":
+                    self.player.af = audio_filter
+                else:
+                    self.player.af = ""
+        except Exception as e:
+            logging.debug("Failed to apply audio normalize: %s", e)
 
     def _persist_runtime_audio_settings(self):
         try:

@@ -1,5 +1,8 @@
-from PySide6.QtCore import QSettings
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, QStandardPaths
 from .utils import get_user_data_path
+from .mpv_power_config import ensure_mpv_power_user_layout, save_mpv_video_overrides
 import os
 
 ORG_NAME = "Cadre"
@@ -45,11 +48,20 @@ def _to_float(value, default: float, min_value: float | None = None, max_value: 
     return number
 
 
-def _to_choice(value, default: str, allowed: set[str]) -> str:
+def _to_choice(value, default: str, allowed: set[str], allow_custom: bool = False) -> str:
     token = str(value or "").strip()
     if token in allowed:
         return token
+    if allow_custom and token:
+        return token
     return default
+
+
+def _get_default_screenshot_dir() -> str:
+    path = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
+    if path:
+        return path
+    return str(Path.home() / "Pictures")
 
 
 def _to_bool(value, default: bool = False) -> bool:
@@ -125,6 +137,16 @@ SUB_POS_KEY = "sub/pos"
 SUB_DELAY_KEY = "sub/delay"
 SUB_BACK_STYLE_KEY = "sub/back_style"
 ASPECT_RATIO_KEY = "video/aspect_ratio"
+VIDEO_SCALE_KEY = "video/scale"
+VIDEO_CSCALE_KEY = "video/cscale"
+VIDEO_DSCALE_KEY = "video/dscale"
+VIDEO_DEBAND_KEY = "video/deband"
+VIDEO_DEBAND_ITERATIONS_KEY = "video/deband_iterations"
+VIDEO_DEBAND_THRESHOLD_KEY = "video/deband_threshold"
+VIDEO_DEBAND_RANGE_KEY = "video/deband_range"
+VIDEO_TONE_MAPPING_KEY = "video/tone_mapping"
+SCREENSHOT_DIR_KEY = "video/screenshot_dir"
+AUDIO_NORMALIZE_KEY = "audio/normalize"
 RESUME_POS_PREFIX = "resume/"
 SUB_DELAY_PER_FILE_PREFIX = "sub_delay/"
 AUDIO_DELAY_KEY = "audio/delay"
@@ -132,14 +154,54 @@ AUDIO_DELAY_PER_FILE_PREFIX = "audio_delay/"
 PIN_CONTROLS_KEY = "player/pin_controls"
 PIN_PLAYLIST_KEY = "player/pin_playlist"
 
+VALID_MPV_SCALES = {
+    "bilinear",
+    "bicubic",
+    "lanczos",
+    "lanczos2",
+    "lanczos3",
+    "lanczos4",
+    "spline16",
+    "spline36",
+    "spline64",
+    "ewa_lanczos",
+    "ewa_lanczossharp",
+    "ewa_lanczos4",
+    "ewa_lanczos4sharpest",
+    "mitchell",
+    "hermite",
+    "robidoux",
+    "catmullrom",
+    "gauss",
+}
+
+VALID_MPV_TONE_MAPPINGS = {
+    "auto",
+    "spline",
+    "bt.2390",
+    "bt.2446a",
+    "st2094_40",
+    "mobius",
+    "hable",
+    "reinhard",
+    "drago",
+    "clip",
+    "gamma",
+    "linear",
+}
+
 
 def load_repeat(default: int = 0) -> int:
+    """Load the repeat mode (0=off,1=one,2=all) from settings."""
     settings = get_settings()
-    value = settings.value(REPEAT_KEY, default)
+    val = settings.value(REPEAT_KEY, default)
     try:
-        return int(value)
+        num = int(val)
     except (TypeError, ValueError):
         return default
+    if num not in {0, 1, 2}:
+        return default
+    return num
 
 
 def save_repeat(value: int) -> None:
@@ -218,6 +280,36 @@ def load_video_settings():
             "auto",
             {"auto", "vulkan", "d3d11", "opengl"},
         ),
+        "scale": _to_choice(
+            settings.value(VIDEO_SCALE_KEY, "ewa_lanczossharp"),
+            "ewa_lanczossharp",
+            VALID_MPV_SCALES,
+            allow_custom=True,
+        ),
+        "cscale": _to_choice(
+            settings.value(VIDEO_CSCALE_KEY, "ewa_lanczossharp"),
+            "ewa_lanczossharp",
+            VALID_MPV_SCALES,
+            allow_custom=True,
+        ),
+        "dscale": _to_choice(
+            settings.value(VIDEO_DSCALE_KEY, "mitchell"),
+            "mitchell",
+            VALID_MPV_SCALES,
+            allow_custom=True,
+        ),
+        "deband": _to_bool(settings.value(VIDEO_DEBAND_KEY, True), True),
+        "deband_iterations": _to_int(settings.value(VIDEO_DEBAND_ITERATIONS_KEY, 2), 2, 1, 4),
+        "deband_threshold": _to_int(settings.value(VIDEO_DEBAND_THRESHOLD_KEY, 48), 48, 0, 128),
+        "deband_range": _to_int(settings.value(VIDEO_DEBAND_RANGE_KEY, 16), 16, 1, 64),
+        "tone_mapping": _to_choice(
+            settings.value(VIDEO_TONE_MAPPING_KEY, "auto"),
+            "auto",
+            VALID_MPV_TONE_MAPPINGS,
+            allow_custom=True,
+        ),
+        "screenshot_dir": str(settings.value(SCREENSHOT_DIR_KEY, _get_default_screenshot_dir())),
+        "audio_normalize": load_audio_normalize(False),
     }
 
 
@@ -235,7 +327,23 @@ def save_video_settings(config: dict):
     if "hwdec" in config: settings.setValue(VIDEO_HWDEC_KEY, config["hwdec"])
     if "renderer" in config: settings.setValue(VIDEO_RENDERER_KEY, config["renderer"])
     if "gpu_api" in config: settings.setValue(VIDEO_GPU_API_KEY, config["gpu_api"])
+    if "scale" in config: settings.setValue(VIDEO_SCALE_KEY, str(config["scale"]))
+    if "cscale" in config: settings.setValue(VIDEO_CSCALE_KEY, str(config["cscale"]))
+    if "dscale" in config: settings.setValue(VIDEO_DSCALE_KEY, str(config["dscale"]))
+    if "deband" in config: settings.setValue(VIDEO_DEBAND_KEY, bool(config["deband"]))
+    if "deband_iterations" in config: settings.setValue(VIDEO_DEBAND_ITERATIONS_KEY, int(config["deband_iterations"]))
+    if "deband_threshold" in config: settings.setValue(VIDEO_DEBAND_THRESHOLD_KEY, int(config["deband_threshold"]))
+    if "deband_range" in config: settings.setValue(VIDEO_DEBAND_RANGE_KEY, int(config["deband_range"]))
+    if "tone_mapping" in config: settings.setValue(VIDEO_TONE_MAPPING_KEY, str(config["tone_mapping"]))
+    if "screenshot_dir" in config: settings.setValue(SCREENSHOT_DIR_KEY, str(config["screenshot_dir"]))
+    if "audio_normalize" in config: save_audio_normalize(bool(config["audio_normalize"]))
     settings.sync()
+
+    try:
+        mpv_paths = ensure_mpv_power_user_layout()
+        save_mpv_video_overrides(mpv_paths["mpv_conf_path"], config)
+    except Exception:
+        pass
 
 
 def load_aspect_ratio(default: str = "auto") -> str:
@@ -297,6 +405,17 @@ def load_audio_delay(default: float = 0.0) -> float:
 def save_audio_delay(value: float) -> None:
     settings = get_settings()
     settings.setValue(AUDIO_DELAY_KEY, float(value))
+    settings.sync()
+
+
+def load_audio_normalize(default: bool = False) -> bool:
+    settings = get_settings()
+    return _to_bool(settings.value(AUDIO_NORMALIZE_KEY, default), default)
+
+
+def save_audio_normalize(value: bool) -> None:
+    settings = get_settings()
+    settings.setValue(AUDIO_NORMALIZE_KEY, bool(value))
     settings.sync()
 
 
