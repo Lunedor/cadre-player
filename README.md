@@ -150,16 +150,6 @@ python main.py
 | Shift+S | Open OpenSubtitles dialog |
 | Shift+I | Toggle mpv technical stats overlay (`stats/display-stats-toggle`) |
 
-## Playback Sync
-
-Audio delay is available from the audio options menu and keyboard shortcuts:
-
-- `Ctrl++`: delay audio by +0.1s
-- `Ctrl+-`: advance audio by -0.1s
-- `Ctrl+0`: reset audio delay to 0.0s
-
-Cadre Player stores audio delay per media item, so a file that needs sync correction keeps that correction next time it is opened. The global audio delay setting is used as the fallback for media without a saved per-file value.
-
 ## mpv Power-User Config
 
 Cadre Player creates and uses an app-managed mpv power-user layout:
