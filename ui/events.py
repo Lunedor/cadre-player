@@ -1150,7 +1150,7 @@ class UIEventsMixin:
                 target_seconds,
                 exc,
             )
-            
+
     def seek_relative(self, seconds: int):
         if self.current_index < 0:
             return
@@ -1499,19 +1499,43 @@ class UIEventsMixin:
     def _process_pending_resize_check(self, now: float) -> bool:
         if not self._pending_resize_check:
             return True
-        if (now - self._last_track_switch_time) < 0.35:
-            return False
-        dims = self._read_video_dimensions()
-        if dims is not None:
-            if dims != self._last_resize_dims:
-                self._apply_video_dimensions(dims)
-            self._resize_stable_hits += 1
-            if self._resize_stable_hits >= 5 and now >= (self._resize_sync_deadline - 0.8):
-                self._pending_resize_check = False
-        elif now >= self._resize_sync_deadline:
-            self._pending_resize_check = False
-        return True
 
+        # Avoid reading mpv immediately after loadfile.
+        if now - self._last_track_switch_time < 0.35:
+            return False
+
+        dims = self._read_video_dimensions()
+        previous_dims = getattr(self, "_pending_previous_resize_dims", None)
+
+        # Do not resize using old dimensions from the previous file. In particular,
+        # after local → YouTube transitions, libmpv can briefly retain the local
+        # file's video parameters while yt-dlp/the new stream is opening.
+        if dims is None or (previous_dims is not None and dims == previous_dims):
+            if now >= self._resize_sync_deadline:
+                logging.warning(
+                    "Initial resize timed out: source=%s old_dims=%r current_dims=%r",
+                    self.get_current_media_source(),
+                    previous_dims,
+                    dims,
+                )
+                self._pending_resize_check = False
+                self._pending_previous_resize_dims = None
+            return False
+
+        logging.info(
+            "Initial dimensions ready: source=%s old_dims=%r new_dims=%r",
+            self.get_current_media_source(),
+            previous_dims,
+            dims,
+        )
+
+        self._apply_video_dimensions(dims)
+        self._pending_resize_check = False
+        self._pending_previous_resize_dims = None
+        self._resize_stable_hits = 0
+
+        return True
+    
     def _handle_pending_background_and_auto_next(self, suppress_end_advance: bool) -> bool:
         if self._pending_show_background:
             self._pending_show_background = False
@@ -2093,6 +2117,13 @@ class UIEventsMixin:
             if vcodec in {"", "none"}:
                 continue
             height = item.get("height")
+            logging.debug(
+                "YouTube format metadata: id=%s width=%r height=%r vcodec=%s",
+                item.get("format_id"),
+                item.get("width"),
+                item.get("height"),
+                vcodec,
+            )
             if isinstance(height, int) and height > 0:
                 codec_label, codec_token = self._normalize_video_codec_label(vcodec)
                 if codec_label and codec_token:
@@ -2153,53 +2184,337 @@ class UIEventsMixin:
                 return opt_label or self._quality_label(value)
         return self._quality_label(value)
 
-    def _reload_current_stream_for_quality_change(self) -> bool:
+    def _reload_current_stream_for_quality_change(
+        self,
+        expected_source: str,
+        resume_position: float,
+        was_paused: bool,
+    ) -> bool:
+        """
+        Reload the current stream after a quality-selection change.
+
+        The selected ytdl-format only takes effect when mpv loads the original
+        stream URL again. Keep the original URL, preserve the previous position,
+        and restore pause state once the new representation has opened.
+        """
+        if self._is_shutting_down:
+            return False
+
         if not (0 <= self.current_index < len(self.playlist)):
             return False
-        current_item = str(self.playlist[self.current_index])
-        if not is_stream_url(current_item):
+
+        current_source = str(self.playlist[self.current_index] or "")
+        if not current_source or current_source != expected_source:
             return False
-        try:
-            self._apply_seek_profile_for_source(current_item)
-        except Exception:
-            pass
-        pos = self._safe_player_float("time_pos", 0.0)
-        was_paused = bool(self._cached_paused)
-        self._quality_reload_until = time.monotonic() + 5.0
+
+        if not is_stream_url(current_source):
+            return False
+
+        self._quality_reload_until = time.monotonic() + 12.0
         self._pending_auto_next = False
         self._auto_next_deadline = 0.0
-        try:
-            self.player.command(
-                "loadfile",
-                current_item,
-                "replace",
-                "pause=yes" if was_paused else "pause=no",
-            )
-            if pos > 1.0:
-                QTimer.singleShot(
-                    200,
-                    lambda p=pos: self.player.command("seek", p, "absolute", "keyframes"),
-                )
-            return True
-        except Exception:
-            try:
-                self.player.command("loadfile", current_item, "replace")
-            except Exception:
-                return False
-            self._set_mpv_property_safe("pause", was_paused, allow_during_busy=True)
-            return True
+
+        self._quality_reload_source = current_source
+        self._quality_reload_position = max(0.0, float(resume_position))
+        self._quality_reload_was_paused = bool(was_paused)
+
+        # Use the normal playback path. It applies ytdl-format before loadfile,
+        # applies the normal stream profile, creates a new load token, and performs
+        # your existing delayed initial-size checks.
+        self.play_current()
+
+        load_token = int(self._playback_load_token)
+        self._quality_reload_token = load_token
+
+        logging.info(
+            "Quality reload started: source=%s resume_pos=%.3f paused=%s load_token=%s",
+            current_source,
+            self._quality_reload_position,
+            self._quality_reload_was_paused,
+            load_token,
+        )
+
+        # Do not use a fixed 200 ms seek. Wait until the newly loaded stream has
+        # duration metadata and is no longer completing its initial open/seek.
+        QTimer.singleShot(
+            300,
+            lambda src=current_source, pos=self._quality_reload_position,
+                paused=self._quality_reload_was_paused, token=load_token:
+                self._restore_position_after_quality_reload(
+                    src,
+                    pos,
+                    paused,
+                    token,
+                    attempt=0,
+                ),
+        )
+        return True
+
 
     def set_stream_quality(self, quality: str):
-        self.stream_quality = str(quality or "best")
-        save_stream_quality(self.stream_quality)
-        self.apply_stream_quality_setting()
-        shown = self._current_quality_display_label(self.stream_quality)
-        reloaded = self._reload_current_stream_for_quality_change()
-        if reloaded:
-            self.show_status_overlay(tr("Quality: {} (reloaded)").format(shown))
-        else:
-            self.show_status_overlay(tr("Quality: {}").format(shown))
+        """
+        Save and apply a ytdl quality selector.
 
+        For an active stream, reload the same original URL and restore its previous
+        position. For no media or a local file, save the preference only.
+        """
+        new_quality = str(quality or "best").strip() or "best"
+
+        if new_quality == self.stream_quality:
+            return
+
+        current_source = ""
+        resume_position = 0.0
+        was_paused = bool(self._cached_paused)
+
+        if 0 <= self.current_index < len(self.playlist):
+            current_source = str(self.playlist[self.current_index] or "")
+
+            try:
+                resume_position = float(self.player.time_pos or 0.0)
+            except Exception:
+                resume_position = 0.0
+
+        self.stream_quality = new_quality
+        save_stream_quality(self.stream_quality)
+
+        # Updates the global ytdl-format now. play_current() will apply the same
+        # selector again directly before it reloads the original YouTube URL.
+        self.apply_stream_quality_setting()
+
+        logging.info(
+            "Quality change requested: quality=%s source=%s resume_pos=%.3f paused=%s",
+            self.stream_quality,
+            current_source,
+            resume_position,
+            was_paused,
+        )
+
+        if not current_source or not is_stream_url(current_source):
+            return
+
+        if not self._reload_current_stream_for_quality_change(
+            expected_source=current_source,
+            resume_position=resume_position,
+            was_paused=was_paused,
+        ):
+            logging.warning(
+                "Quality change saved but stream reload was not started: source=%s",
+                current_source,
+            )
+
+    def _restore_position_after_quality_reload(
+        self,
+        expected_source: str,
+        position: float,
+        was_paused: bool,
+        expected_load_token: int,
+        attempt: int = 0,
+    ):
+        """
+        Wait until the reloaded stream is usable, restore the old position and
+        play/pause state, then resize only after libmpv reports new dimensions.
+        """
+        if self._is_shutting_down:
+            return
+
+        if expected_load_token != int(self._playback_load_token):
+            logging.info(
+                "Quality reload restore cancelled: newer load replaced token=%s",
+                expected_load_token,
+            )
+            return
+
+        if not (0 <= self.current_index < len(self.playlist)):
+            return
+
+        current_source = str(self.playlist[self.current_index] or "")
+        if current_source != expected_source:
+            logging.info("Quality reload restore cancelled: source changed")
+            return
+
+        try:
+            duration = float(self.player.duration or 0.0)
+        except Exception:
+            duration = 0.0
+
+        try:
+            seeking = bool(self.player.seeking)
+        except Exception:
+            seeking = False
+
+        # Wait for the new stream to finish its initial load. A YouTube reload may
+        # take a few seconds before duration/video parameters are available.
+        if (duration <= 0.0 or seeking) and attempt < 30:
+            QTimer.singleShot(
+                250,
+                lambda src=expected_source,
+                    pos=position,
+                    paused=was_paused,
+                    token=expected_load_token,
+                    next_attempt=attempt + 1:
+                    self._restore_position_after_quality_reload(
+                        src,
+                        pos,
+                        paused,
+                        token,
+                        next_attempt,
+                    ),
+            )
+            return
+
+        target = max(0.0, float(position))
+        if duration > 1.0:
+            target = min(target, max(0.0, duration - 1.0))
+
+        try:
+            # Save the dimensions from the previously playing representation, then
+            # clear the cached value. This prevents sync_size() from reusing stale
+            # 1080p/720p dimensions while the new representation is opening.
+            previous_dims = self._last_resize_dims
+            self._last_resize_dims = None
+
+            if target > 0.25:
+                logging.info(
+                    "Quality reload restoring position: target=%.3f "
+                    "duration=%.3f attempt=%s old_dims=%r",
+                    target,
+                    duration,
+                    attempt,
+                    previous_dims,
+                )
+
+                self.player.command(
+                    "seek",
+                    str(target),
+                    "absolute",
+                    "keyframes",
+                )
+
+            def restore_pause_state():
+                if self._is_shutting_down:
+                    return
+
+                if expected_load_token != int(self._playback_load_token):
+                    return
+
+                self._set_mpv_property_safe(
+                    "pause",
+                    bool(was_paused),
+                    allow_during_busy=True,
+                )
+
+            # Let the seek request begin, then restore the state the user had
+            # before changing quality.
+            QTimer.singleShot(500, restore_pause_state)
+
+            # Start dimension polling after the new stream has decoded/reached the
+            # restored timestamp. The helper must not use stale cached dimensions.
+            QTimer.singleShot(
+                650,
+                lambda src=expected_source,
+                    token=expected_load_token,
+                    old_dims=previous_dims:
+                    self._resize_after_quality_reload(
+                        src,
+                        token,
+                        old_dims,
+                        attempt=0,
+                    ),
+            )
+
+            self._quality_reload_until = 0.0
+
+        except Exception as exc:
+            logging.warning(
+                "Quality reload position restore failed: "
+                "target=%.3f attempt=%s error=%s",
+                target,
+                attempt,
+                exc,
+            )
+
+            if attempt < 30:
+                QTimer.singleShot(
+                    300,
+                    lambda src=expected_source,
+                        pos=position,
+                        paused=was_paused,
+                        token=expected_load_token,
+                        next_attempt=attempt + 1:
+                        self._restore_position_after_quality_reload(
+                            src,
+                            pos,
+                            paused,
+                            token,
+                            next_attempt,
+                        ),
+                )
+    
+    def _resize_after_quality_reload(
+        self,
+        expected_source: str,
+        expected_load_token: int,
+        previous_dims,
+        attempt: int = 0,
+    ):
+        """
+        Resize after a quality reload only when libmpv reports the new video's
+        actual dimensions, rather than a stale cached size.
+        """
+        if self._is_shutting_down:
+            return
+
+        if expected_load_token != int(self._playback_load_token):
+            return
+
+        if not (0 <= self.current_index < len(self.playlist)):
+            return
+
+        current_source = str(self.playlist[self.current_index] or "")
+        if current_source != expected_source:
+            return
+
+        dims = self._read_video_dimensions()
+
+        # `dims is None` means mpv has not exposed video parameters yet.
+        #
+        # `dims == previous_dims` can mean that mpv is still reporting data from
+        # the prior representation. Wait until it reports a new size.
+        if dims is None or (previous_dims is not None and dims == previous_dims):
+            if attempt < 40:
+                QTimer.singleShot(
+                    250,
+                    lambda src=expected_source,
+                        token=expected_load_token,
+                        old_dims=previous_dims,
+                        next_attempt=attempt + 1:
+                        self._resize_after_quality_reload(
+                            src,
+                            token,
+                            old_dims,
+                            next_attempt,
+                        ),
+                )
+            else:
+                logging.warning(
+                    "Quality reload resize timed out: "
+                    "old_dims=%r current_dims=%r",
+                    previous_dims,
+                    dims,
+                )
+            return
+
+        logging.info(
+            "Quality reload new dimensions detected: "
+            "old_dims=%r new_dims=%r attempt=%s",
+            previous_dims,
+            dims,
+            attempt,
+        )
+
+        self._apply_video_dimensions(dims)  
+    
     def _is_owned_by_player(self, obj):
         if obj is None:
             return False

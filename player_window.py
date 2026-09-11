@@ -175,6 +175,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._resize_sync_deadline = 0.0
         self._resize_stable_hits = 0
         self._last_resize_dims = None
+        self._pending_previous_resize_dims = None
         self._track_switch_cooldown = 1.10
         self._manual_switch_settle_sec = 1.10
         self._next_loadfile_allowed_at = 0.0
@@ -199,6 +200,10 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._last_seek_cmd_time = 0.0
         self._auto_next_deadline = 0.0
         self._quality_reload_until = 0.0
+        self._quality_reload_source = ""
+        self._quality_reload_position = 0.0
+        self._quality_reload_was_paused = False
+        self._quality_reload_token = 0
         self._user_paused = False
         self._pending_duration_paths = []
         self._pending_model_appends = []
@@ -1537,31 +1542,44 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 value,
                 allow_during_busy=True,
             )
-            
+
     def _prepare_playback_switch_state(self, current_file) -> None:
         self._pending_auto_next = False
         self._pending_show_background = False
         self._pending_hide_background = True
         self.background_widget.show()
+
         self._last_track_switch_time = time.monotonic()
-        # Always keep a bounded post-load resize probe as a hard fallback.
-        # Some files expose dimensions only after decode starts.
+
+        # Preserve the previous video's dimensions only for comparison, then clear
+        # the active cached dimensions. This prevents a local file's old size from
+        # being reused while YouTube is still opening/decoding its first frame.
+        self._pending_previous_resize_dims = self._last_resize_dims
+        self._last_resize_dims = None
+
+        # The normal UI polling path should wait for actual fresh video dimensions.
         self._pending_resize_check = True
         self._resize_stable_hits = 0
-        self._last_resize_dims = None
         self._resize_sync_deadline = time.monotonic() + (
-            6.0 if _is_stream_url(str(current_file)) else 3.0
+            12.0 if _is_stream_url(str(current_file)) else 4.0
         )
+
         self._auto_next_deadline = 0.0
         self._user_paused = False
         self._last_position = 0.0
         self._last_duration = 0.0
         self._last_progress_time = 0.0
         self._unsafe_mpv_read_allowed_at = time.monotonic() + 1.25
-        # Do not force speed here; rapid set_property calls can crash on some mpv builds.
-        # Give mpv more settle time between rapid switches before property polling.
+
+        # Avoid property polling while libmpv is changing files.
         self._suspend_ui_poll_until = time.monotonic() + 0.95
         self._next_ui_poll_at = self._suspend_ui_poll_until
+
+        logging.info(
+            "Playback resize reset: source=%s previous_dims=%r",
+            current_file,
+            self._pending_previous_resize_dims,
+        )
 
     def _load_current_file_with_resize_strategy(
         self,
