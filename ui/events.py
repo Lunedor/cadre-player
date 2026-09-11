@@ -645,8 +645,6 @@ class UIEventsMixin:
         self._exec_modal(dialog)
 
     def toggle_window_maximize(self):
-        if self.isFullScreen():
-            return
         if self.isMaximized():
             self.showNormal()
             self.title_bar.max_btn.setIcon(QIcon(icon_maximize(18)))
@@ -1022,17 +1020,137 @@ class UIEventsMixin:
 
     def seek_absolute(self, value: int):
         if self.current_index < 0:
-            return
-        now = time.monotonic()
-        if (now - self._last_seek_cmd_time) < 0.08:
-            return
-        self._last_seek_cmd_time = now
-        try:
-            target = max(0, int(value))
-            self.player.command("seek", target, "absolute", "keyframes")
-        except Exception:
+            logging.warning("Seek ignored: no active playlist item")
             return
 
+        now = time.monotonic()
+
+        if now - self._last_seek_cmd_time < 0.08:
+            return
+
+        self._last_seek_cmd_time = now
+
+        try:
+            target = max(0, int(value))
+            source = str(self.playlist[self.current_index] or "")
+
+            try:
+                before_pos = float(self.player.time_pos or 0.0)
+            except Exception:
+                before_pos = -1.0
+
+            try:
+                duration = float(self.player.duration or 0.0)
+            except Exception:
+                duration = -1.0
+
+            logging.info(
+                "Seek request: target=%s before_pos=%.3f duration=%.3f "
+                "youtube=%s source=%s",
+                target,
+                before_pos,
+                duration,
+                _is_youtube_url(source),
+                source,
+            )
+
+            self.player.command(
+                "seek",
+                str(target),
+                "absolute",
+                "keyframes",
+            )
+
+            logging.info(
+                "Seek command submitted: target=%s",
+                target,
+            )
+
+            QTimer.singleShot(
+                800,
+                lambda src=source, target_sec=target:
+                    self._log_seek_result(src, target_sec, 1),
+            )
+
+        except Exception as exc:
+            logging.exception(
+                "Seek command failed: target=%s error=%s",
+                value,
+                exc,
+            )
+
+    def _log_seek_result(
+        self,
+        expected_source: str,
+        target_seconds: int,
+        attempt: int = 1,
+    ):
+        if self._is_shutting_down:
+            return
+
+        if not (0 <= self.current_index < len(self.playlist)):
+            return
+
+        current_source = str(self.playlist[self.current_index] or "")
+        if current_source != expected_source:
+            logging.info(
+                "Seek result skipped: media changed before check"
+            )
+            return
+
+        try:
+            try:
+                position = float(self.player.time_pos or 0.0)
+            except Exception:
+                position = -1.0
+
+            try:
+                duration = float(self.player.duration or 0.0)
+            except Exception:
+                duration = -1.0
+
+            try:
+                seeking = self.player.seeking
+            except Exception:
+                seeking = "<unavailable>"
+
+            try:
+                paused_for_cache = self.player.paused_for_cache
+            except Exception:
+                paused_for_cache = "<unavailable>"
+
+            try:
+                eof_reached = self.player.eof_reached
+            except Exception:
+                eof_reached = "<unavailable>"
+
+            logging.info(
+                "Seek result: attempt=%s target=%s actual_pos=%.3f "
+                "duration=%.3f seeking=%r paused_for_cache=%r eof=%r",
+                attempt,
+                target_seconds,
+                position,
+                duration,
+                seeking,
+                paused_for_cache,
+                eof_reached,
+            )
+
+            # Check twice more because a network seek can legitimately take time.
+            if attempt < 3:
+                QTimer.singleShot(
+                    1200,
+                    lambda src=expected_source, target=target_seconds, n=attempt + 1:
+                        self._log_seek_result(src, target, n),
+                )
+
+        except Exception as exc:
+            logging.warning(
+                "Seek result inspection failed: target=%s error=%s",
+                target_seconds,
+                exc,
+            )
+            
     def seek_relative(self, seconds: int):
         if self.current_index < 0:
             return
@@ -1852,31 +1970,57 @@ class UIEventsMixin:
         except Exception as e:
             logging.debug("adjust_audio_delay failed: %s", e)
 
-    def apply_stream_quality_setting(self):
-        # Reset cached per-URL quality lists to avoid stale results after runtime
-        # extractor/client option changes.
-        self._stream_quality_cache.clear()
+    def _quality_to_ytdl_format(self) -> str:
         mapping = {
-            "best": "bestvideo+bestaudio/best",
-            "1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-            "720": "bestvideo[height<=720]+bestaudio/best[height<=720]",
-            "480": "bestvideo[height<=480]+bestaudio/best[height<=480]",
-            "360": "bestvideo[height<=360]+bestaudio/best[height<=360]",
+            "best": "bestvideo*+bestaudio/best",
+            "auto": "bestvideo*+bestaudio/best",
+            "2160": "bestvideo[height<=2160]+bestaudio/best",
+            "1440": "bestvideo[height<=1440]+bestaudio/best",
+            "1080": "bestvideo[height<=1080]+bestaudio/best",
+            "720": "bestvideo[height<=720]+bestaudio/best",
+            "480": "bestvideo[height<=480]+bestaudio/best",
+            "360": "bestvideo[height<=360]+bestaudio/best",
         }
-        raw_quality = str(self.stream_quality or "best")
+
+        raw_quality = str(getattr(self, "stream_quality", "best") or "best").strip()
+        normalized_quality = raw_quality.lower().rstrip("p")
+
         if raw_quality.startswith(YTDLP_FMT_PREFIX):
-            fmt = raw_quality[len(YTDLP_FMT_PREFIX) :].strip() or mapping["best"]
-        else:
-            fmt = mapping.get(raw_quality, mapping["best"])
+            return raw_quality[len(YTDLP_FMT_PREFIX):].strip() or mapping["best"]
+
+        return mapping.get(normalized_quality, mapping["best"])
+
+
+    def apply_stream_quality_setting(self):
+        # Existing behavior: clear quality metadata cached for stream URLs whenever
+        # the user changes the requested quality.
+        self._stream_quality_cache.clear()
+
+        fmt = self._quality_to_ytdl_format()
+
         try:
             self.player.ytdl_format = fmt
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning(
+                "Could not set global ytdl_format: quality=%s format=%s error=%s",
+                self.stream_quality,
+                fmt,
+                exc,
+            )
+
+        logging.info(
+            "Stream quality setting changed: ui_quality=%s ytdl_format=%s",
+            self.stream_quality,
+            fmt,
+        )
+
         try:
             if 0 <= self.current_index < len(self.playlist):
-                self._apply_seek_profile_for_source(self.playlist[self.current_index])
+                self._apply_seek_profile_for_source(
+                    self.playlist[self.current_index]
+                )
         except Exception:
-            pass
+            logging.exception("Could not reapply current stream profile after quality change")
 
     def _quality_label(self, value: str) -> str:
         if value == "best":

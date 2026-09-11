@@ -1,10 +1,47 @@
 import logging
 
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QMenu, QMessageBox
 from PySide6.QtCore import Qt
 from ..ui.styles import MENU_STYLE
-from ..settings import load_aspect_ratio, load_language_setting
+from ..settings import (
+    load_aspect_ratio,
+    load_language_setting,
+    clear_playback_history,
+    clear_downloaded_subtitles_cache,
+)
 from ..i18n import tr, get_supported_languages
+
+def _confirm_clear_playback_history(player) -> None:
+    reply = QMessageBox.question(
+        player,
+        tr("Clear Resume Positions && Delays"),
+        tr("This will erase all saved resume positions and per-file subtitle/audio delays. Continue?"),
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    if reply == QMessageBox.Yes:
+        clear_playback_history()
+        try:
+            player.show_status_overlay(tr("Playback history cleared"))
+        except Exception as e:
+            logging.debug("Could not show status overlay after clearing playback history: %s", e)
+
+
+def _confirm_clear_subtitles_cache(player) -> None:
+    reply = QMessageBox.question(
+        player,
+        tr("Clear Downloaded Subtitles Cache"),
+        tr("This will delete all subtitle files downloaded from OpenSubtitles. Continue?"),
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.No,
+    )
+    if reply == QMessageBox.Yes:
+        clear_downloaded_subtitles_cache()
+        try:
+            player.show_status_overlay(tr("Downloaded subtitles cache cleared"))
+        except Exception as e:
+            logging.debug("Could not show status overlay after clearing subtitles cache: %s", e)
+
 
 def create_main_context_menu(player, pos):
     menu = QMenu(player)
@@ -106,6 +143,14 @@ def create_main_context_menu(player, pos):
 
     screenshot_action = playback_settings_menu.addAction(tr("Screenshot") + "\tS")
     screenshot_action.triggered.connect(player.screenshot_save_as)
+
+    playback_settings_menu.addSeparator()
+
+    clear_resume_action = playback_settings_menu.addAction(tr("Clear Resume Positions && Delays..."))
+    clear_resume_action.triggered.connect(lambda: _confirm_clear_playback_history(player))
+
+    clear_subs_action = playback_settings_menu.addAction(tr("Clear Downloaded Subtitles Cache..."))
+    clear_subs_action.triggered.connect(lambda: _confirm_clear_subtitles_cache(player))
 
     # Audio Options
     audio_options_menu = menu.addMenu(tr("Audio Options"))

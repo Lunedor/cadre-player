@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, QStandardPaths
-from .utils import get_user_data_path
+from .utils import get_user_data_path, get_user_data_dir
 from .mpv_power_config import ensure_mpv_power_user_layout, save_mpv_video_overrides
+import json
 import os
+import shutil
+import time
 
 ORG_NAME = "Cadre"
 APP_NAME = "Cadre Player"
@@ -153,6 +156,145 @@ AUDIO_DELAY_KEY = "audio/delay"
 AUDIO_DELAY_PER_FILE_PREFIX = "audio_delay/"
 PIN_CONTROLS_KEY = "player/pin_controls"
 PIN_PLAYLIST_KEY = "player/pin_playlist"
+
+# Per-file playback history (resume position, sub/audio delay) is kept out of
+# settings.ini in its own bounded JSON file so it doesn't grow forever.
+PLAYBACK_HISTORY_FILE = "playback_history.json"
+PLAYBACK_HISTORY_MAX_ENTRIES = 500
+# Shared by the store and apply sides so a saved resume point is never below what actually gets used.
+MIN_RESUME_SECONDS = 5.0
+
+_playback_history_cache: dict | None = None
+_legacy_playback_history_migrated = False
+
+
+def _playback_history_path() -> str:
+    return get_user_data_path(PLAYBACK_HISTORY_FILE)
+
+
+def _read_playback_history_file() -> dict:
+    path = _playback_history_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_playback_history_file(data: dict) -> None:
+    path = _playback_history_path()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+
+
+def _migrate_legacy_playback_history(data: dict) -> bool:
+    """One-time move of resume/sub_delay/audio_delay entries out of settings.ini."""
+    global _legacy_playback_history_migrated
+    if _legacy_playback_history_migrated:
+        return False
+    _legacy_playback_history_migrated = True
+
+    settings = get_settings()
+    prefixes = {
+        RESUME_POS_PREFIX: "resume",
+        SUB_DELAY_PER_FILE_PREFIX: "sub_delay",
+        AUDIO_DELAY_PER_FILE_PREFIX: "audio_delay",
+    }
+    migrated = False
+    for key in settings.allKeys():
+        for prefix, field in prefixes.items():
+            if not key.startswith(prefix):
+                continue
+            file_path = key[len(prefix):]
+            if not file_path:
+                continue
+            try:
+                value = float(settings.value(key, 0.0))
+            except (TypeError, ValueError):
+                value = 0.0
+            entry = data.setdefault(file_path, {})
+            entry[field] = value
+            entry.setdefault("ts", time.time())
+            settings.remove(key)
+            migrated = True
+            break
+    if migrated:
+        settings.sync()
+    return migrated
+
+
+def _load_playback_history() -> dict:
+    global _playback_history_cache
+    if _playback_history_cache is None:
+        data = _read_playback_history_file()
+        if _migrate_legacy_playback_history(data):
+            _prune_playback_history(data)
+            _write_playback_history_file(data)
+        _playback_history_cache = data
+    return _playback_history_cache
+
+
+def _save_playback_history(data: dict) -> None:
+    global _playback_history_cache
+    _playback_history_cache = data
+    _write_playback_history_file(data)
+
+
+def _prune_playback_history(data: dict) -> None:
+    if len(data) <= PLAYBACK_HISTORY_MAX_ENTRIES:
+        return
+    ordered = sorted(data.items(), key=lambda kv: kv[1].get("ts", 0) if isinstance(kv[1], dict) else 0)
+    excess = len(ordered) - PLAYBACK_HISTORY_MAX_ENTRIES
+    for file_path, _ in ordered[:excess]:
+        data.pop(file_path, None)
+
+
+def _touch_playback_entry(data: dict, file_path: str) -> dict:
+    entry = data.setdefault(file_path, {})
+    entry["ts"] = time.time()
+    return entry
+
+
+def _remove_playback_field(data: dict, file_path: str, field: str) -> None:
+    entry = data.get(file_path)
+    if not entry:
+        return
+    entry.pop(field, None)
+    if any(k in entry for k in ("resume", "sub_delay", "audio_delay")):
+        entry["ts"] = time.time()
+    else:
+        data.pop(file_path, None)
+
+
+def clear_playback_history() -> None:
+    """Clears all stored resume positions and per-file sub/audio delays."""
+    global _playback_history_cache, _legacy_playback_history_migrated
+    _playback_history_cache = {}
+    _legacy_playback_history_migrated = True
+    path = _playback_history_path()
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+    # Also clean up any lingering legacy keys still in settings.ini.
+    settings = get_settings()
+    for key in settings.allKeys():
+        if key.startswith(RESUME_POS_PREFIX) or key.startswith(SUB_DELAY_PER_FILE_PREFIX) or key.startswith(AUDIO_DELAY_PER_FILE_PREFIX):
+            settings.remove(key)
+    settings.sync()
+
+
+def clear_downloaded_subtitles_cache() -> None:
+    """Deletes locally cached subtitle files downloaded from OpenSubtitles."""
+    subs_dir = get_user_data_dir() / "subtitles"
+    if subs_dir.exists():
+        shutil.rmtree(subs_dir, ignore_errors=True)
 
 VALID_MPV_SCALES = {
     "bilinear",
@@ -360,20 +502,26 @@ def save_aspect_ratio(ratio: str) -> None:
 def save_resume_position(file_path: str, seconds: float) -> None:
     if not file_path:
         return
-    settings = get_settings()
-    # Using path as key might have issues with some characters, but QSettings usually handles it
-    # Better to use a hash or a safe string if we are worried, but let's try direct first.
-    settings.setValue(f"{RESUME_POS_PREFIX}{file_path}", float(seconds))
-    settings.sync()
+    data = _load_playback_history()
+    seconds = float(seconds)
+    if seconds <= MIN_RESUME_SECONDS:
+        # Not worth resuming; drop any stale value instead of storing a useless one.
+        _remove_playback_field(data, file_path, "resume")
+    else:
+        entry = _touch_playback_entry(data, file_path)
+        entry["resume"] = seconds
+    _prune_playback_history(data)
+    _save_playback_history(data)
 
 
 def load_resume_position(file_path: str) -> float:
     if not file_path:
         return 0.0
-    settings = get_settings()
-    val = settings.value(f"{RESUME_POS_PREFIX}{file_path}", 0.0)
+    entry = _load_playback_history().get(file_path)
+    if not entry:
+        return 0.0
     try:
-        return float(val)
+        return float(entry.get("resume", 0.0))
     except (TypeError, ValueError):
         return 0.0
 
@@ -381,18 +529,21 @@ def load_resume_position(file_path: str) -> float:
 def save_sub_delay_for_file(file_path: str, seconds: float) -> None:
     if not file_path:
         return
-    settings = get_settings()
-    settings.setValue(f"{SUB_DELAY_PER_FILE_PREFIX}{file_path}", float(seconds))
-    settings.sync()
+    data = _load_playback_history()
+    entry = _touch_playback_entry(data, file_path)
+    entry["sub_delay"] = float(seconds)
+    _prune_playback_history(data)
+    _save_playback_history(data)
 
 
 def load_sub_delay_for_file(file_path: str, default: float = 0.0) -> float:
     if not file_path:
         return float(default)
-    settings = get_settings()
-    val = settings.value(f"{SUB_DELAY_PER_FILE_PREFIX}{file_path}", float(default))
+    entry = _load_playback_history().get(file_path)
+    if not entry:
+        return float(default)
     try:
-        return float(val)
+        return float(entry.get("sub_delay", default))
     except (TypeError, ValueError):
         return float(default)
 
@@ -422,18 +573,21 @@ def save_audio_normalize(value: bool) -> None:
 def save_audio_delay_for_file(file_path: str, seconds: float) -> None:
     if not file_path:
         return
-    settings = get_settings()
-    settings.setValue(f"{AUDIO_DELAY_PER_FILE_PREFIX}{file_path}", float(seconds))
-    settings.sync()
+    data = _load_playback_history()
+    entry = _touch_playback_entry(data, file_path)
+    entry["audio_delay"] = float(seconds)
+    _prune_playback_history(data)
+    _save_playback_history(data)
 
 
 def load_audio_delay_for_file(file_path: str, default: float = 0.0) -> float:
     if not file_path:
         return float(default)
-    settings = get_settings()
-    val = settings.value(f"{AUDIO_DELAY_PER_FILE_PREFIX}{file_path}", float(default))
+    entry = _load_playback_history().get(file_path)
+    if not entry:
+        return float(default)
     try:
-        return float(val)
+        return float(entry.get("audio_delay", default))
     except (TypeError, ValueError):
         return float(default)
 

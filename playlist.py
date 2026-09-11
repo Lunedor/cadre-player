@@ -1903,7 +1903,9 @@ class PlaylistViewMixin:
         dur = float(self._last_duration or 0.0)
         if pos <= 0 or dur <= 0:
             return
-        if pos > (dur - 15):
+        # Scale the "near end" window with duration so short clips aren't always forced to 0.
+        near_end_threshold = min(15.0, dur * 0.1)
+        if pos > (dur - near_end_threshold):
             save_resume_position(path, 0)
         else:
             save_resume_position(path, pos)

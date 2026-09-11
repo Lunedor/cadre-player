@@ -1480,44 +1480,64 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 )
         except (TypeError, ValueError):
             pass
-
     def _apply_seek_profile_for_source(self, current_file) -> None:
         source = str(current_file or "")
-        stream_source = _is_stream_url(source)
         is_youtube = _is_youtube_url(source)
-        yt_remote_components = (
-            "remote-components=ejs:github" if is_youtube else ""
-        )
-        if stream_source:
+
+        if is_youtube:
+            ytdl_format = self._quality_to_ytdl_format()
+
+            try:
+                self.player.ytdl_format = ytdl_format
+
+                logging.info(
+                    "YouTube ytdl-format confirmed before loadfile: "
+                    "requested=%s effective=%s",
+                    ytdl_format,
+                    self.player.ytdl_format,
+                )
+            except Exception as exc:
+                logging.warning(
+                    "Could not set YouTube ytdl-format before loadfile: "
+                    "requested=%s error=%s",
+                    ytdl_format,
+                    exc,
+                )
+
+            logging.info(
+                "YouTube diagnostic profile: using mpv defaults; "
+                "ui_quality=%s ytdl_format=%s",
+                self.stream_quality,
+                ytdl_format,
+            )
+
+            # Important: do not set cache, demuxer limits, force-seekable,
+            # hr-seek, ytdl-raw-options, or player-client settings here.
+            return
+
+        # Keep non-YouTube behavior simple and unchanged.
+        if _is_stream_url(source):
             profile = {
                 "cache": "yes",
-                "demuxer_max_bytes": "1000M",
-                "demuxer_max_back_bytes": "200M",
-                "force_seekable": "yes",
+                "demuxer_max_bytes": "100M",
+                "demuxer_max_back_bytes": "50M",
                 "hr_seek": "no",
-                # Keep stream profile fast while enforcing EJS remote components for YouTube.
-                "ytdl_raw_options": yt_remote_components,
             }
         else:
             profile = {
                 "cache": "auto",
                 "demuxer_max_bytes": "64M",
                 "demuxer_max_back_bytes": "16M",
-                "force_seekable": "no",
                 "hr_seek": "yes",
-                "ytdl_raw_options": "",
             }
-        for prop, value in profile.items():
-            self._set_mpv_property_safe(prop, value, allow_during_busy=True)
-        if stream_source and is_youtube:
-            logging.info(
-                "YouTube seek profile applied: quality=%s ytdl_raw_options=%s cache=%s demuxer_max_bytes=%s",
-                str(getattr(self, "stream_quality", "unknown")),
-                profile.get("ytdl_raw_options", ""),
-                profile.get("cache", ""),
-                profile.get("demuxer_max_bytes", ""),
-            )
 
+        for prop, value in profile.items():
+            self._set_mpv_property_safe(
+                prop,
+                value,
+                allow_during_busy=True,
+            )
+            
     def _prepare_playback_switch_state(self, current_file) -> None:
         self._pending_auto_next = False
         self._pending_show_background = False
@@ -1543,13 +1563,28 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         self._suspend_ui_poll_until = time.monotonic() + 0.95
         self._next_ui_poll_at = self._suspend_ui_poll_until
 
-    def _load_current_file_with_resize_strategy(self, current_file, load_token: int) -> None:
+    def _load_current_file_with_resize_strategy(
+        self,
+        current_file,
+        load_token: int,
+    ) -> None:
         loaded_paused = False
-        # Prefer paused load first so first visible frame can be sized correctly.
+
         try:
-            self.player.command("loadfile", current_file, "replace", "pause=yes")
+            self.player.command(
+                "loadfile",
+                current_file,
+                "replace",
+                "-1",
+                "pause=yes",
+            )
             loaded_paused = True
-        except Exception:
+        except Exception as exc:
+            logging.warning(
+                "Paused loadfile failed; retrying normal load: source=%s error=%s",
+                current_file,
+                exc,
+            )
             self.player.command("loadfile", current_file, "replace")
         if loaded_paused:
             max_attempts = 18 if _is_stream_url(str(current_file)) else 8
@@ -1628,7 +1663,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
     def _schedule_resume_and_chapter_refresh(self, current_file, load_token: int) -> None:
         # Resume logic
         resume_pos = load_resume_position(current_file)
-        if resume_pos > 5:  # Only resume if more than 5 seconds in
+        if resume_pos > 0:  # Anything stored already passed the MIN_RESUME_SECONDS floor
             QTimer.singleShot(
                 240,
                 lambda t=load_token, p=str(current_file), pos=resume_pos: self._safe_resume_seek(t, p, pos, 0),

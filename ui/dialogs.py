@@ -21,7 +21,7 @@ from ..settings import (
     load_opensubtitles_settings, save_opensubtitles_settings,
 )
 from ..i18n import tr
-from .widgets import ClickableSlider
+from .widgets import ClickableSlider, NoWheelComboBox, NoWheelSlider
 from ..utils import OpenSubtitlesLanguagesWorker, OpenSubtitlesWorker, media_query_from_source
 
 
@@ -83,6 +83,11 @@ class SubtitleSettingsDialog(QDialog):
                 self._current_media_source = ""
         delay_value = load_sub_delay_for_file(self._current_media_source, float(sub_config.get("delay", 0.0)))
 
+        # Snapshot so we can revert live-preview changes if the dialog is closed without "Done"
+        self._original_sub_config = dict(sub_config)
+        self._original_delay = delay_value
+        self.rejected.connect(self._revert_changes)
+
         # Appearance Group
         appearance_group = QGroupBox(tr("Appearance"))
         form_layout = QFormLayout(appearance_group)
@@ -111,7 +116,7 @@ class SubtitleSettingsDialog(QDialog):
         form_layout.addRow(tr("Font Size") + ":", size_layout)
 
         # Color
-        self.sub_color_combo = QComboBox()
+        self.sub_color_combo = NoWheelComboBox()
         self.color_map = {
             tr("White"): "#FFFFFF", tr("Yellow"): "#FFFF00", tr("Cyan"): "#00FFFF", 
             tr("Green"): "#00FF00", tr("Red"): "#FF0000"
@@ -126,7 +131,7 @@ class SubtitleSettingsDialog(QDialog):
         form_layout.addRow(tr("Color") + ":", self.sub_color_combo)
 
         # Background Style
-        self.back_style_combo = QComboBox()
+        self.back_style_combo = NoWheelComboBox()
         # MPV sub-back-style mapping: shadow=Shadow, outline=Outline, opaque=Opaque Box, none=None
         self.back_styles = [tr("None"), tr("Shadow"), tr("Outline"), tr("Opaque Box")]
         self.back_style_combo.addItems(self.back_styles)
@@ -139,7 +144,7 @@ class SubtitleSettingsDialog(QDialog):
         form_layout.addRow(tr("Background") + ":", self.back_style_combo)
 
         # Vertical Position (Slider)
-        self.pos_slider = QSlider(Qt.Horizontal)
+        self.pos_slider = NoWheelSlider(Qt.Horizontal)
         self.pos_slider.setRange(0, 100)
         self.pos_slider.setValue(sub_config["pos"])
         self.pos_slider.valueChanged.connect(self.update_subtitles)
@@ -219,6 +224,12 @@ class SubtitleSettingsDialog(QDialog):
             save_sub_delay_for_file(self._current_media_source, delay_value)
         self.player_window.apply_subtitle_settings()
 
+    def _revert_changes(self):
+        save_sub_settings(self._original_sub_config)
+        if self._current_media_source:
+            save_sub_delay_for_file(self._current_media_source, self._original_delay)
+        self.player_window.apply_subtitle_settings()
+
 
 class VideoSettingsDialog(QDialog):
     def __init__(self, player_window, parent=None):
@@ -235,6 +246,11 @@ class VideoSettingsDialog(QDialog):
 
         config = load_video_settings()
 
+        # Snapshot so we can revert live-preview changes if the dialog is closed without "Done"
+        self._original_video_config = dict(config)
+        self._original_aspect = load_aspect_ratio()
+        self.rejected.connect(self._revert_changes)
+
         # Use a scroll area so the dialog fits smaller screens
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -248,13 +264,13 @@ class VideoSettingsDialog(QDialog):
         engine_layout = QFormLayout(engine_group)
         engine_layout.setContentsMargins(15, 20, 15, 15)
         
-        self.hwdec_combo = QComboBox()
+        self.hwdec_combo = NoWheelComboBox()
         self.hwdec_combo.addItems(["no", "auto", "auto-safe", "d3d11va", "nvdec"])
         self.hwdec_combo.setCurrentText(config.get("hwdec", "auto-safe"))
         self.hwdec_combo.currentIndexChanged.connect(self.update_video)
         engine_layout.addRow(tr("Hardware Decoding") + ":", self.hwdec_combo)
 
-        self.renderer_combo = QComboBox()
+        self.renderer_combo = NoWheelComboBox()
         self.renderer_combo.addItem(tr("GPU (Legacy)"), "gpu")
         self.renderer_combo.addItem(tr("GPU Next (Recommended for DV)"), "gpu-next")
         current_renderer = config.get("renderer", "gpu")
@@ -265,7 +281,7 @@ class VideoSettingsDialog(QDialog):
         self.renderer_combo.currentIndexChanged.connect(self.update_video)
         engine_layout.addRow(tr("Renderer") + ":", self.renderer_combo)
 
-        self.gpu_api_combo = QComboBox()
+        self.gpu_api_combo = NoWheelComboBox()
         self.gpu_api_combo.addItem(tr("Auto (Default)"), "auto")
         self.gpu_api_combo.addItem("Vulkan", "vulkan")
         self.gpu_api_combo.addItem("D3D11", "d3d11")
@@ -293,18 +309,18 @@ class VideoSettingsDialog(QDialog):
             "ewa_lanczossharp",
             "ewa_lanczos4sharpest",
         ]
-        self.scale_combo = QComboBox()
+        self.scale_combo = NoWheelComboBox()
         make_choice_combo(self.scale_combo, scale_options, config.get("scale", "ewa_lanczossharp"))
         self.scale_combo.currentIndexChanged.connect(self.update_video)
         upscale_layout.addRow(tr("Scale") + ":", self.scale_combo)
 
-        self.cscale_combo = QComboBox()
+        self.cscale_combo = NoWheelComboBox()
         make_choice_combo(self.cscale_combo, scale_options, config.get("cscale", "ewa_lanczossharp"))
         self.cscale_combo.currentIndexChanged.connect(self.update_video)
         upscale_layout.addRow(tr("Chroma Scale") + ":", self.cscale_combo)
 
         dscale_options = ["bilinear", "mitchell", "hermite", "lanczos", "spline36"]
-        self.dscale_combo = QComboBox()
+        self.dscale_combo = NoWheelComboBox()
         make_choice_combo(self.dscale_combo, dscale_options, config.get("dscale", "mitchell"))
         self.dscale_combo.currentIndexChanged.connect(self.update_video)
         upscale_layout.addRow(tr("Downscale") + ":", self.dscale_combo)
@@ -321,7 +337,7 @@ class VideoSettingsDialog(QDialog):
         self.deband_check.toggled.connect(self._update_deband_enabled)
         deband_layout.addRow(self.deband_check)
 
-        self.deband_iterations_slider = QSlider(Qt.Horizontal)
+        self.deband_iterations_slider = NoWheelSlider(Qt.Horizontal)
         self.deband_iterations_slider.setRange(1, 4)
         self.deband_iterations_slider.setValue(config.get("deband_iterations", 2))
         self.deband_iterations_label = QLabel(str(self.deband_iterations_slider.value()))
@@ -331,7 +347,7 @@ class VideoSettingsDialog(QDialog):
         it_layout.addWidget(self.deband_iterations_label)
         deband_layout.addRow(tr("Iterations") + ":", it_layout)
 
-        self.deband_threshold_slider = QSlider(Qt.Horizontal)
+        self.deband_threshold_slider = NoWheelSlider(Qt.Horizontal)
         self.deband_threshold_slider.setRange(0, 128)
         self.deband_threshold_slider.setValue(config.get("deband_threshold", 48))
         self.deband_threshold_label = QLabel(str(self.deband_threshold_slider.value()))
@@ -341,7 +357,7 @@ class VideoSettingsDialog(QDialog):
         th_layout.addWidget(self.deband_threshold_label)
         deband_layout.addRow(tr("Threshold") + ":", th_layout)
 
-        self.deband_range_slider = QSlider(Qt.Horizontal)
+        self.deband_range_slider = NoWheelSlider(Qt.Horizontal)
         self.deband_range_slider.setRange(1, 64)
         self.deband_range_slider.setValue(config.get("deband_range", 16))
         self.deband_range_label = QLabel(str(self.deband_range_slider.value()))
@@ -359,7 +375,7 @@ class VideoSettingsDialog(QDialog):
         tone_layout.setContentsMargins(15, 20, 15, 15)
 
         tone_options = ["auto", "spline", "bt.2390", "bt.2446a", "st2094_40", "mobius"]
-        self.tone_combo = QComboBox()
+        self.tone_combo = NoWheelComboBox()
         make_choice_combo(self.tone_combo, tone_options, config.get("tone_mapping", "auto"))
         self.tone_combo.currentIndexChanged.connect(self.update_video)
         tone_layout.addRow(tr("Tone Mapping") + ":", self.tone_combo)
@@ -405,7 +421,7 @@ class VideoSettingsDialog(QDialog):
         adjust_layout = QFormLayout(adjust_group)
         adjust_layout.setContentsMargins(15, 20, 15, 15)
         
-        self.bright_slider = QSlider(Qt.Horizontal)
+        self.bright_slider = NoWheelSlider(Qt.Horizontal)
         self.bright_slider.setRange(-100, 100)
         self.bright_slider.setValue(config["brightness"])
         self.bright_label = QLabel(str(self.bright_slider.value()))
@@ -415,7 +431,7 @@ class VideoSettingsDialog(QDialog):
         bright_row.addWidget(self.bright_label)
         adjust_layout.addRow(tr("Brightness") + ":", bright_row)
 
-        self.contrast_slider = QSlider(Qt.Horizontal)
+        self.contrast_slider = NoWheelSlider(Qt.Horizontal)
         self.contrast_slider.setRange(-100, 100)
         self.contrast_slider.setValue(config["contrast"])
         self.contrast_label = QLabel(str(self.contrast_slider.value()))
@@ -425,7 +441,7 @@ class VideoSettingsDialog(QDialog):
         contrast_row.addWidget(self.contrast_label)
         adjust_layout.addRow(tr("Contrast") + ":", contrast_row)
 
-        self.sat_slider = QSlider(Qt.Horizontal)
+        self.sat_slider = NoWheelSlider(Qt.Horizontal)
         self.sat_slider.setRange(-100, 100)
         self.sat_slider.setValue(config["saturation"])
         self.sat_label = QLabel(str(self.sat_slider.value()))
@@ -435,7 +451,7 @@ class VideoSettingsDialog(QDialog):
         sat_row.addWidget(self.sat_label)
         adjust_layout.addRow(tr("Saturation") + ":", sat_row)
 
-        self.gamma_slider = QSlider(Qt.Horizontal)
+        self.gamma_slider = NoWheelSlider(Qt.Horizontal)
         self.gamma_slider.setRange(-100, 100)
         self.gamma_slider.setValue(config["gamma"])
         self.gamma_label = QLabel(str(self.gamma_slider.value()))
@@ -478,7 +494,7 @@ class VideoSettingsDialog(QDialog):
         geo_layout.addRow(tr("Video Zoom") + ":", zoom_layout)
 
         # Aspect Ratio
-        self.aspect_combo = QComboBox()
+        self.aspect_combo = NoWheelComboBox()
         self.aspect_combo.addItems([tr("auto"), "16:9", "4:3", "16:10", "2.35:1", "2.39:1"])
         saved_aspect = load_aspect_ratio()
         display_aspect = tr("auto") if saved_aspect == "auto" else saved_aspect
@@ -487,7 +503,7 @@ class VideoSettingsDialog(QDialog):
         geo_layout.addRow(tr("Aspect Ratio") + ":", self.aspect_combo)
 
         # Rotation
-        self.rotate_combo = QComboBox()
+        self.rotate_combo = NoWheelComboBox()
         self.rotate_combo.addItems(["0°", "90°", "180°", "270°"])
         rotate_val = config["rotate"]
         self.rotate_combo.setCurrentIndex(max(0, min(3, rotate_val // 90)))
@@ -655,6 +671,12 @@ class VideoSettingsDialog(QDialog):
         self.player_window.apply_video_settings()
         # Suppress toast when updating aspect from the settings dialog
         self.player_window.set_aspect_ratio(aspect_val, show_toast=False)
+
+    def _revert_changes(self):
+        save_video_settings(self._original_video_config)
+        save_aspect_ratio(self._original_aspect)
+        self.player_window.apply_video_settings()
+        self.player_window.set_aspect_ratio(self._original_aspect, show_toast=False)
 
 
 class URLInputDialog(QDialog):
@@ -1143,6 +1165,11 @@ class EqualizerDialog(QDialog):
         self.gains = self.settings["gains"]
         self.enabled = self.settings["enabled"]
 
+        # Snapshot so we can revert live-preview changes if the dialog is closed without "Done"
+        self._original_enabled = self.enabled
+        self._original_gains = list(self.gains)
+        self.rejected.connect(self._revert_changes)
+
         layout = QVBoxLayout(self)
         layout.setSpacing(20)
         layout.setContentsMargins(30, 30, 30, 30)
@@ -1169,7 +1196,7 @@ class EqualizerDialog(QDialog):
             band_layout = QVBoxLayout()
             band_layout.setSpacing(8)
             
-            slider = ClickableSlider(Qt.Vertical)
+            slider = NoWheelSlider(Qt.Vertical)
             slider.setRange(-12, 12)
             slider.setValue(self.gains[i])
             slider.setTickPosition(QSlider.TicksBothSides)
@@ -1218,6 +1245,10 @@ class EqualizerDialog(QDialog):
         save_equalizer_settings(self.enabled, current_gains)
         if self.enabled:
             self.player_window.update_equalizer_gains(current_gains)
+
+    def _revert_changes(self):
+        save_equalizer_settings(self._original_enabled, self._original_gains)
+        self.player_window.apply_equalizer_settings()
 
 
 class AboutDialog(QDialog):

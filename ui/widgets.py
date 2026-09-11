@@ -17,6 +17,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QStyle,
     QStyleOptionSlider,
     QStyledItemDelegate,
@@ -400,6 +401,20 @@ class ClickableSlider(QSlider):
             self.sliderMoved.emit(self.value())
         
         super().mousePressEvent(event)
+
+
+class NoWheelComboBox(QComboBox):
+    """QComboBox that ignores wheel events so scrolling a settings dialog doesn't change values."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelSlider(ClickableSlider):
+    """ClickableSlider that ignores wheel events so scrolling a settings dialog doesn't change values."""
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class ChapterSlider(ClickableSlider):

@@ -33,8 +33,6 @@ def configure_windows_dlls(project_dir: Path) -> None:
         for directory in unique_dirs:
             os.add_dll_directory(str(directory))
 
-    os.environ["PATH"] = os.pathsep.join([*(str(d) for d in unique_dirs), os.environ.get("PATH", "")])
-
     # Best effort: pre-load bundled mpv dll variants if present.
     dll_names = ("libmpv-2.dll", "mpv-1.dll", "mpv.dll")
     for directory in unique_dirs:
