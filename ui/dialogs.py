@@ -68,30 +68,28 @@ def make_value_combo(
     combo.clear()
 
     current_value = str(current_value or "").strip()
+    selected_index = 0
     found = False
 
-    for label, value in options:
+    for i, (label, value) in enumerate(options):
         combo.addItem(label, value)
-
         if value == current_value:
+            selected_index = i
             found = True
 
     if current_value and not found:
         custom_index = combo.count()
-
         combo.addItem(
-            f"{current_value} (Custom)",
+            f"{current_value} ({tr('custom')})",
             current_value,
         )
-
         item = combo.model().item(custom_index)
         if item is not None:
             item.setEnabled(False)
-
         combo.setCurrentIndex(custom_index)
         return combo
 
-    combo.setCurrentIndex(0)
+    combo.setCurrentIndex(selected_index)
     return combo
 
 class SubtitleSettingsDialog(QDialog):
