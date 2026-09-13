@@ -1,5 +1,4 @@
 from pathlib import Path
-
 from .utils import get_user_data_dir
 
 
@@ -92,11 +91,11 @@ def load_mpv_video_overrides(mpv_conf_path: str) -> dict:
             key, value = line.split("=", 1)
             key = key.strip().lower()
             value = value.strip()
-            if key == "vo" and value in {"gpu", "gpu-next"}:
+            if key == "vo" and value:
                 overrides["renderer"] = value
-            elif key == "gpu-api" and value in {"auto", "vulkan", "d3d11", "opengl"}:
+            elif key == "gpu-api" and value:
                 overrides["gpu_api"] = value
-            elif key == "hwdec" and value in {"no", "auto", "auto-safe", "d3d11va", "nvdec"}:
+            elif key == "hwdec" and value:
                 overrides["hwdec"] = value
             elif key == "brightness":
                 overrides["brightness"] = _clamp_int(value, 0, -100, 100)

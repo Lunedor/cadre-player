@@ -196,10 +196,6 @@ In packaged/frozen mode on Windows, files are stored in:
 - No playback:
   - verify `mpv-1.dll` / `libmpv` is available
 
-## Known Issues
-
-- Cannot seek or start from a certain time with high-quality and long YouTube videos. This is related to yt-dlp, mpv, and YouTube stream logic, which I have not yet figured out how to fix. You can try different codec options from the Video Quality menu; H.264 and AV1 produce better results for this issue.
-
 ## Project Structure
 
 - `main.py`, `main.pyw`: app entry points

@@ -411,16 +411,19 @@ def load_video_settings():
             settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
             "auto-safe",
             {"no", "auto", "auto-safe", "d3d11va", "nvdec"},
+            allow_custom=True,
         ),
         "renderer": _to_choice(
             settings.value(VIDEO_RENDERER_KEY, "gpu"),
             "gpu",
             {"gpu", "gpu-next"},
+            allow_custom=True,
         ),
         "gpu_api": _to_choice(
             settings.value(VIDEO_GPU_API_KEY, "auto"),
             "auto",
             {"auto", "vulkan", "d3d11", "opengl"},
+            allow_custom=True,
         ),
         "scale": _to_choice(
             settings.value(VIDEO_SCALE_KEY, "ewa_lanczossharp"),
@@ -455,7 +458,9 @@ def load_video_settings():
     }
 
 
-def save_video_settings(config: dict):
+def save_video_settings(config: dict,
+    changed_keys: set[str] | None = None,
+    write_mpv_conf: bool = True,):
     settings = get_settings()
     if "brightness" in config: settings.setValue(VIDEO_BRIGHTNESS_KEY, int(config["brightness"]))
     if "contrast" in config: settings.setValue(VIDEO_CONTRAST_KEY, int(config["contrast"]))
@@ -481,9 +486,27 @@ def save_video_settings(config: dict):
     if "audio_normalize" in config: save_audio_normalize(bool(config["audio_normalize"]))
     settings.sync()
 
+    if not write_mpv_conf:
+        return
+
     try:
         mpv_paths = ensure_mpv_power_user_layout()
-        save_mpv_video_overrides(mpv_paths["mpv_conf_path"], config)
+
+        if changed_keys is None:
+            mpv_config_patch = config
+        else:
+            mpv_config_patch = {
+                key: config[key]
+                for key in changed_keys
+                if key in config
+            }
+
+        if mpv_config_patch:
+            save_mpv_video_overrides(
+                mpv_paths["mpv_conf_path"],
+                mpv_config_patch,
+            )
+
     except Exception:
         pass
 

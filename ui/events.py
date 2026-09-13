@@ -165,7 +165,8 @@ class UIEventsMixin:
     def _save_zoom_setting(self):
         config = load_video_settings()
         config["zoom"] = self.window_zoom
-        save_video_settings(config)
+        save_video_settings(config,
+        changed_keys={"zoom"},)
 
     def update_transport_icons(self):
         if self._is_shutting_down:
@@ -1205,7 +1206,12 @@ class UIEventsMixin:
         self._aspect_ratio_setting = str(ratio_str or "auto")
         try:
             if ratio_str == "auto":
-                self._set_mpv_property_safe("video_aspect_override", -1, allow_during_busy=True)
+                self._set_mpv_property_safe(
+                    "video-aspect-override", "no", allow_during_busy=True
+                )
+                self._set_mpv_property_safe(
+                    "video-aspect-method", "container", allow_during_busy=True
+                )
             else:
                 self._set_mpv_property_safe("video_aspect_override", ratio_str, allow_during_busy=True)
 
@@ -1268,19 +1274,27 @@ class UIEventsMixin:
 
     def apply_equalizer_settings(self):
         data = load_equalizer_settings()
+
         try:
-            if data["enabled"]:
+            base_filter = getattr(self, "mpvconf_audiofilter", "") or ""
+            base_filter = base_filter.strip()
+
+            if data.get("enabled"):
                 freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
-                gains = data["gains"]
-                af_str = ",".join(
-                    f"equalizer=f={f}:width_type=o:w=1:g={g}"
-                    for f, g in zip(freqs, gains)
+                gains = data.get("gains", [])
+
+                eq_filter = ",".join(
+                    f"equalizer=f={freq}:width_type=o:w=1:g={gain}"
+                    for freq, gain in zip(freqs, gains)
                 )
-                self.player.af = af_str
+
+                filters = [item for item in (base_filter, eq_filter) if item]
+                self.player.af = ",".join(filters)
             else:
-                self.player.af = ""
-        except (KeyError, TypeError, ValueError, RuntimeError) as e:
-            logging.warning("Apply EQ error: %s", e)
+                self.player.af = base_filter
+
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+            logging.warning("Apply EQ error: %s", exc)
 
     def update_equalizer_gains(self, gains):
         self.apply_equalizer_settings()
@@ -3190,7 +3204,7 @@ class UIEventsMixin:
             self.player.brightness = min(100, self.player.brightness + 5)
         cfg = load_video_settings()
         cfg["brightness"] = int(self.player.brightness or 0)
-        save_video_settings(cfg)
+        save_video_settings(cfg,changed_keys={"brightness"})
         self.show_status_overlay(tr("Brightness: {}").format(self.player.brightness))
         return True
 
@@ -3199,7 +3213,12 @@ class UIEventsMixin:
         cfg["rotate"] = int(self._video_rotate_deg or 0) % 360
         cfg["mirror_horizontal"] = bool(self._video_mirror_horizontal)
         cfg["mirror_vertical"] = bool(self._video_mirror_vertical)
-        save_video_settings(cfg)
+        save_video_settings(cfg,
+        changed_keys={
+            "rotate",
+            "mirror_horizontal",
+            "mirror_vertical",
+        })
 
     def rotate_video_90(self, angle=None):
         # Supports both shortcut rotate (+90) and menu select absolute angle.

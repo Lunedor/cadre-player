@@ -527,13 +527,27 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 v_config["audio_normalize"] = True
             if mpv_conf_overrides:
                 v_config.update(mpv_conf_overrides)
-                save_video_settings(v_config)
+                save_video_settings(
+                    v_config,
+                    write_mpv_conf=False,
+                )
                 self.window_zoom = float(v_config.get("zoom", 0.0))
-                self._video_rotate_deg = int(v_config.get("rotate", 0) or 0) % 360
-                self._video_mirror_horizontal = bool(v_config.get("mirror_horizontal", False))
-                self._video_mirror_vertical = bool(v_config.get("mirror_vertical", False))
-                self._seek_thumbnail_preview = bool(v_config.get("seek_thumbnail_preview", False))
-                logging.info("Applied video overrides from mpv.conf: %s", sorted(mpv_conf_overrides.keys()))
+                self._video_rotate_deg = int(
+                    v_config.get("rotate", 0) or 0
+                ) % 360
+                self._video_mirror_horizontal = bool(
+                    v_config.get("mirror_horizontal", False)
+                )
+                self._video_mirror_vertical = bool(
+                    v_config.get("mirror_vertical", False)
+                )
+                self._seek_thumbnail_preview = bool(
+                    v_config.get("seek_thumbnail_preview", False)
+                )
+                logging.info(
+                    "Applied video overrides from mpv.conf: %s",
+                    sorted(mpv_conf_overrides.keys()),
+                )
             logging.info(
                 "MPV power-user config: dir=%s mpv_conf=%s scripts=%s",
                 self._mpv_config_dir,

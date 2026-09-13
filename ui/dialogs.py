@@ -60,6 +60,40 @@ def make_choice_combo(combo: QComboBox, displayed_options: list[str], current_va
 
     return combo
 
+def make_value_combo(
+    combo: QComboBox,
+    options: list[tuple[str, str]],
+    current_value: str,
+) -> QComboBox:
+    combo.clear()
+
+    current_value = str(current_value or "").strip()
+    found = False
+
+    for label, value in options:
+        combo.addItem(label, value)
+
+        if value == current_value:
+            found = True
+
+    if current_value and not found:
+        custom_index = combo.count()
+
+        combo.addItem(
+            f"{current_value} (Custom)",
+            current_value,
+        )
+
+        item = combo.model().item(custom_index)
+        if item is not None:
+            item.setEnabled(False)
+
+        combo.setCurrentIndex(custom_index)
+        return combo
+
+    combo.setCurrentIndex(0)
+    return combo
+
 class SubtitleSettingsDialog(QDialog):
     def __init__(self, player_window, parent=None):
         super().__init__(parent)
@@ -248,7 +282,18 @@ class VideoSettingsDialog(QDialog):
 
         # Snapshot so we can revert live-preview changes if the dialog is closed without "Done"
         self._original_video_config = dict(config)
+
+        original_audio_filter = ""
+        if hasattr(self.player_window, "_mpv_conf_audio_filter"):
+            original_audio_filter = str(
+                self.player_window._mpv_conf_audio_filter or ""
+            ).strip()
+
+        self._original_video_config["audio_filter"] = original_audio_filter
+
         self._original_aspect = load_aspect_ratio()
+        self._pending_video_config = dict(self._original_video_config)
+        self._pending_aspect = self._original_aspect
         self.rejected.connect(self._revert_changes)
 
         # Use a scroll area so the dialog fits smaller screens
@@ -263,36 +308,71 @@ class VideoSettingsDialog(QDialog):
         engine_group = QGroupBox(tr("Performance"))
         engine_layout = QFormLayout(engine_group)
         engine_layout.setContentsMargins(15, 20, 15, 15)
-        
+
+        # Hardware decoding
         self.hwdec_combo = NoWheelComboBox()
-        self.hwdec_combo.addItems(["no", "auto", "auto-safe", "d3d11va", "nvdec"])
-        self.hwdec_combo.setCurrentText(config.get("hwdec", "auto-safe"))
+
+        hwdec_options = [
+            "no",
+            "auto",
+            "auto-safe",
+            "d3d11va",
+            "nvdec",
+        ]
+
+        make_choice_combo(
+            self.hwdec_combo,
+            hwdec_options,
+            config.get("hwdec", "auto-safe"),
+        )
+
         self.hwdec_combo.currentIndexChanged.connect(self.update_video)
-        engine_layout.addRow(tr("Hardware Decoding") + ":", self.hwdec_combo)
 
+        engine_layout.addRow(
+            tr("Hardware Decoding") + ":",
+            self.hwdec_combo,
+        )
+
+        # Renderer
         self.renderer_combo = NoWheelComboBox()
-        self.renderer_combo.addItem(tr("GPU (Legacy)"), "gpu")
-        self.renderer_combo.addItem(tr("GPU Next (Recommended for DV)"), "gpu-next")
-        current_renderer = config.get("renderer", "gpu")
-        for i in range(self.renderer_combo.count()):
-            if self.renderer_combo.itemData(i) == current_renderer:
-                self.renderer_combo.setCurrentIndex(i)
-                break
-        self.renderer_combo.currentIndexChanged.connect(self.update_video)
-        engine_layout.addRow(tr("Renderer") + ":", self.renderer_combo)
 
+        make_value_combo(
+            self.renderer_combo,
+            [
+                (tr("GPU (Legacy)"), "gpu"),
+                (tr("GPU Next (Recommended for DV)"), "gpu-next"),
+            ],
+            config.get("renderer", "gpu"),
+        )
+
+        self.renderer_combo.currentIndexChanged.connect(self.update_video)
+
+        engine_layout.addRow(
+            tr("Renderer") + ":",
+            self.renderer_combo,
+        )
+
+        # GPU API
         self.gpu_api_combo = NoWheelComboBox()
-        self.gpu_api_combo.addItem(tr("Auto (Default)"), "auto")
-        self.gpu_api_combo.addItem("Vulkan", "vulkan")
-        self.gpu_api_combo.addItem("D3D11", "d3d11")
-        self.gpu_api_combo.addItem("OpenGL", "opengl")
-        current_gpu_api = config.get("gpu_api", "auto")
-        for i in range(self.gpu_api_combo.count()):
-            if self.gpu_api_combo.itemData(i) == current_gpu_api:
-                self.gpu_api_combo.setCurrentIndex(i)
-                break
+
+        make_value_combo(
+            self.gpu_api_combo,
+            [
+                (tr("Auto (Default)"), "auto"),
+                ("Vulkan", "vulkan"),
+                ("D3D11", "d3d11"),
+                ("OpenGL", "opengl"),
+            ],
+            config.get("gpu_api", "auto"),
+        )
+
         self.gpu_api_combo.currentIndexChanged.connect(self.update_video)
-        engine_layout.addRow(tr("GPU API") + ":", self.gpu_api_combo)
+
+        engine_layout.addRow(
+            tr("GPU API") + ":",
+            self.gpu_api_combo,
+        )
+
         content_layout.addWidget(engine_group)
 
         # Upscaling Group
@@ -403,6 +483,8 @@ class VideoSettingsDialog(QDialog):
             audio_layout.addRow(audio_filter_label)
 
         content_layout.addWidget(audio_group)
+
+        self._original_video_config["audio_filter"] = original_audio_filter
 
         # Screenshot Folder Group
         screenshot_group = QGroupBox(tr("Screenshots"))
@@ -538,7 +620,7 @@ class VideoSettingsDialog(QDialog):
         
         done_btn = QPushButton(tr("Done"))
         done_btn.setObjectName("PrimaryButton")
-        done_btn.clicked.connect(self.accept)
+        done_btn.clicked.connect(self._save_and_accept)
         btn_layout.addWidget(done_btn)
         
         content_layout.addLayout(btn_layout)
@@ -650,7 +732,7 @@ class VideoSettingsDialog(QDialog):
             "mirror_horizontal": self.mirror_h_check.isChecked(),
             "mirror_vertical": self.mirror_v_check.isChecked(),
             "seek_thumbnail_preview": self.seek_thumb_check.isChecked(),
-            "hwdec": self.hwdec_combo.currentText(),
+            "hwdec": self.hwdec_combo.currentData(),
             "renderer": self.renderer_combo.currentData(),
             "gpu_api": self.gpu_api_combo.currentData(),
             "scale": self.scale_combo.currentData(),
@@ -665,19 +747,37 @@ class VideoSettingsDialog(QDialog):
             "audio_filter": audio_filter,
             "screenshot_dir": self.screenshot_dir_edit.text().strip(),
         }
-        save_video_settings(config)
-        save_aspect_ratio(aspect_val)
+        
+        self._pending_video_config = config
+        self._pending_aspect = aspect_val
 
+        self.player_window._mpv_conf_audio_filter = audio_filter
         self.player_window.apply_video_settings()
-        # Suppress toast when updating aspect from the settings dialog
-        self.player_window.set_aspect_ratio(aspect_val, show_toast=False)
+
+    def _save_and_accept(self):
+        self.update_video()
+
+        save_video_settings(
+            self._pending_video_config,
+            changed_keys=set(self._pending_video_config.keys()),
+            write_mpv_conf=True,
+        )
+
+        save_aspect_ratio(self._pending_aspect)
+
+        self.accept()
 
     def _revert_changes(self):
-        save_video_settings(self._original_video_config)
-        save_aspect_ratio(self._original_aspect)
-        self.player_window.apply_video_settings()
-        self.player_window.set_aspect_ratio(self._original_aspect, show_toast=False)
+        self.player_window._mpv_conf_audio_filter = str(
+            self._original_video_config.get("audio_filter", "") or ""
+        ).strip()
 
+        self.player_window.apply_video_settings()
+
+        self.player_window.set_aspect_ratio(
+            self._original_aspect,
+            show_toast=False,
+        )
 
 class URLInputDialog(QDialog):
     def __init__(self, parent=None):
