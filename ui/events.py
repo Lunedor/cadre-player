@@ -77,6 +77,7 @@ except ImportError:
 
 YTDLP_REMOTE_COMPONENTS = "ejs:github"
 YTDLP_FMT_PREFIX = "fmt:"
+_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def _is_youtube_url(url: str) -> bool:
@@ -895,24 +896,83 @@ class UIEventsMixin:
 
         self._fullscreen_transition_active = False
 
+    def _safe_filename_stem(self, value: str, fallback: str = "screenshot") -> str:
+        value = (value or "").strip()
+
+        # If this is a URL, do not use it as a filesystem name.
+        parsed = urlparse(value)
+        if parsed.scheme and parsed.netloc:
+            value = "youtube" if "youtube" in parsed.netloc.lower() or "youtu.be" in parsed.netloc.lower() else "stream"
+
+        # Remove invalid filesystem characters, including Windows-invalid ones.
+        value = _INVALID_FILENAME_CHARS.sub("_", value)
+        value = re.sub(r"\s+", " ", value).strip(" ._")
+
+        # Windows device names cannot be used as filenames.
+        reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5",
+            "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+            "LPT6", "LPT7", "LPT8", "LPT9",
+        }
+        if not value or value.upper() in reserved:
+            return fallback
+
+        return value[:150]
+
     def screenshot_save_as(self):
         if not self.playlist or self.current_index < 0:
             return
 
-        base = Path(self.playlist[self.current_index]).stem
+        source = str(self.playlist[self.current_index])
+
+        # Best option: mpv's resolved title, when available.
+        title = getattr(self.player, "media_title", None)
+
+        if title:
+            base = self._safe_filename_stem(str(title), "youtube")
+        else:
+            parsed = urlparse(source)
+            if parsed.scheme and parsed.netloc:
+                base = self._safe_filename_stem(parsed.hostname or "stream", "stream")
+            else:
+                base = self._safe_filename_stem(Path(source).stem, "screenshot")
+
         timestamp = QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss")
         default_name = f"{base}_{timestamp}.png"
-        dialog = QFileDialog(self, tr("Save screenshot"), str(Path.home() / "Pictures" / default_name))
+
+        default_path = Path.home() / "Pictures" / default_name
+
+        dialog = QFileDialog(
+            self,
+            tr("Save screenshot"),
+            str(default_path),
+        )
         dialog.setAcceptMode(QFileDialog.AcceptSave)
-        dialog.setNameFilter(tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)"))
+        dialog.setDefaultSuffix("png")
+        dialog.setNameFilter(
+            tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)")
+        )
+
         selected = self._run_file_dialog(dialog)
         path = selected[0] if selected else ""
+
         if not path:
             return
 
         target = Path(path)
+
+        # QFileDialog can return a filename with no suffix depending on platform/filter.
+        if not target.suffix:
+            target = target.with_suffix(".png")
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        self.player.command("screenshot-to-file", str(target), "video")
+
+        try:
+            self.player.command("screenshot-to-file", str(target), "video")
+        except Exception:
+            logging.exception("Could not save screenshot to %s", target)
 
     def _status_overlay_timeout_for_text(self, text: str) -> int:
         msg = str(text or "").strip().casefold()
