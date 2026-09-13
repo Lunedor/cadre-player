@@ -2390,6 +2390,7 @@ class PlaylistViewMixin:
                     replace_existing=True,
                     title_map=title_map,
                     duration_map=duration_map,
+                    resolve_stream_urls=False,
                 )
                 self.show_status_overlay(tr("Loaded {} items").format(len(entries)))
             else:
