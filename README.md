@@ -41,14 +41,16 @@ It is focused on:
 - Playback speed controls, shuffle, repeat modes
 - Visual chapter markers on the seekbar (from libmpv chapter metadata)
 - Optional seekbar thumbnail preview while hovering (`Video Settings -> Geometry -> Seek Thumbnail Preview`)
+- Configurable seek step for Left/Right shortcut seeking (`Video Settings -> Playback -> Seek Step`)
 - Subtitle settings, video tuning, and 10-band equalizer
-- OpenSubtitles.com integration (search + download + apply in-app, `Shift+S`)
+- OpenSubtitles.com integration (search + download + apply in-app)
 - Downloaded subtitles are stored per media in `%APPDATA%\CadrePlayer\subtitles\` and auto-loaded on replay
 - Subtitle delay is saved per file (instead of one global delay)
 - Audio sync delay controls are saved per file, with a global fallback for new media
 - Video geometry tools: rotation + mirror horizontal/vertical (X/Y shortcuts)
+- Screenshot options for default folder, ask-before-save behavior, capture content, and image format
 - On-demand technical stats overlay via mpv `stats.lua` (`Shift+I`)
-- Power-user mpv integration: app-managed `mpv.conf` + `scripts/` (Lua/JS auto-loaded)
+- Power-user mpv integration: app-managed `mpv.conf` + `input.conf` + `scripts/` (Lua/JS auto-loaded) + `shaders/`
 - Session playlist snapshot with one-click restore from playlist controls
 - Auto-restore last saved session playlist on startup when launching without explicit media arguments
 - Stream import feedback with summary toast (`Imported X, failed Y`) and detailed log entries
@@ -101,10 +103,12 @@ python main.py
 
 ## Keyboard Shortcuts
 
+Shortcuts can be customized from the settings menu with `Customize Shortcuts`. Defaults are:
+
 | Key | Action |
 | --- | --- |
 | Space | Play / Pause |
-| Left / Right | Seek backward / forward |
+| Left / Right | Seek backward / forward by the configured seek step |
 | Up / Down | Volume up / down |
 | PageUp | Previous item |
 | PageDown | Next item |
@@ -132,7 +136,7 @@ python main.py
 | 6 | Pan right only when video is zoomed |
 | 8 | Pan up only when video is zoomed |
 | 2 | Pan down only when video is zoomed |
-| R | Rotate video +90° |
+| R | Rotate video +90 degrees |
 | Ctrl+R | Reset rotation |
 | X | Toggle mirror horizontal |
 | Y | Toggle mirror vertical |
@@ -150,12 +154,25 @@ python main.py
 | Shift+S | Open OpenSubtitles dialog |
 | Shift+I | Toggle mpv technical stats overlay (`stats/display-stats-toggle`) |
 
+The seek step defaults to `5 s` and can be changed to any value from `1` to `60` seconds in `Video Settings -> Playback -> Seek Step`.
+
+## Screenshot Settings
+
+Screenshot behavior is configurable in `Video Settings -> Screenshots`:
+
+- Default save folder
+- Ask where to save each time, or save directly to the default folder
+- Capture video image only, video image with subtitles, or the full window as shown including overlays/OSD
+- Output format: PNG, JPEG, WebP, JPEG XL, or AVIF
+
 ## mpv Power-User Config
 
 Cadre Player creates and uses an app-managed mpv power-user layout:
 
 - `mpv.conf` for advanced raw libmpv options
+- `input.conf` for additional shortcuts
 - `scripts/` folder for native mpv scripts (`.lua`, `.js`)
+- `shaders/` folder for native shader support
 - Main menu actions:
   - `Open Advanced Config (mpv.conf)`
   - `Open Scripts Folder`
