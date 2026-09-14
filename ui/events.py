@@ -45,6 +45,7 @@ from .menus import create_main_context_menu, create_playlist_context_menu
 from ..i18n import tr
 from ..mpv_power_config import ensure_mpv_power_user_layout
 from ..settings import (
+    _get_default_screenshot_dir,
     load_sub_delay_for_file,
     load_audio_delay,
     load_audio_delay_for_file,
@@ -925,6 +926,17 @@ class UIEventsMixin:
         if not self.playlist or self.current_index < 0:
             return
 
+        config = dict(getattr(self, "_video_config", None) or load_video_settings())
+        screenshot_format = str(config.get("screenshot_format", "png") or "png").strip().lower()
+        if screenshot_format == "jpeg":
+            screenshot_format = "jpg"
+        if screenshot_format not in {"png", "jpg", "webp", "jxl", "avif"}:
+            screenshot_format = "png"
+
+        screenshot_mode = str(config.get("screenshot_mode", "video") or "video").strip().lower()
+        if screenshot_mode not in {"video", "subtitles", "window"}:
+            screenshot_mode = "video"
+
         source = str(self.playlist[self.current_index])
 
         # Best option: mpv's resolved title, when available.
@@ -940,39 +952,61 @@ class UIEventsMixin:
                 base = self._safe_filename_stem(Path(source).stem, "screenshot")
 
         timestamp = QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss")
-        default_name = f"{base}_{timestamp}.png"
+        default_name = f"{base}_{timestamp}.{screenshot_format}"
 
-        default_path = Path.home() / "Pictures" / default_name
+        screenshot_dir = str(config.get("screenshot_dir") or "").strip() or _get_default_screenshot_dir()
+        default_path = Path(screenshot_dir).expanduser() / default_name
 
-        dialog = QFileDialog(
-            self,
-            tr("Save screenshot"),
-            str(default_path),
-        )
-        dialog.setAcceptMode(QFileDialog.AcceptSave)
-        dialog.setDefaultSuffix("png")
-        dialog.setNameFilter(
-            tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;All files (*.*)")
-        )
+        if bool(config.get("screenshot_use_default_dir", False)):
+            target = default_path
+        else:
+            dialog = QFileDialog(
+                self,
+                tr("Save screenshot"),
+                str(default_path),
+            )
+            dialog.setAcceptMode(QFileDialog.AcceptSave)
+            dialog.setDefaultSuffix(screenshot_format)
+            dialog.setNameFilter(
+                tr("PNG (*.png);;JPEG (*.jpg *.jpeg);;WebP (*.webp);;JPEG XL (*.jxl);;AVIF (*.avif);;All files (*.*)")
+            )
 
-        selected = self._run_file_dialog(dialog)
-        path = selected[0] if selected else ""
+            filter_by_format = {
+                "png": "PNG (*.png)",
+                "jpg": "JPEG (*.jpg *.jpeg)",
+                "webp": "WebP (*.webp)",
+                "jxl": "JPEG XL (*.jxl)",
+                "avif": "AVIF (*.avif)",
+            }
+            dialog.selectNameFilter(filter_by_format.get(screenshot_format, "PNG (*.png)"))
 
-        if not path:
-            return
+            selected = self._run_file_dialog(dialog)
+            path = selected[0] if selected else ""
 
-        target = Path(path)
+            if not path:
+                return
+
+            target = Path(path)
 
         # QFileDialog can return a filename with no suffix depending on platform/filter.
         if not target.suffix:
-            target = target.with_suffix(".png")
+            target = target.with_suffix(f".{screenshot_format}")
+        else:
+            suffix_format = target.suffix.lstrip(".").lower()
+            if suffix_format == "jpeg":
+                suffix_format = "jpg"
+            if suffix_format in {"png", "jpg", "webp", "jxl", "avif"}:
+                screenshot_format = suffix_format
 
         target.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.player.command("screenshot-to-file", str(target), "video")
+            self._set_mpv_property_safe("screenshot_format", screenshot_format, allow_during_busy=True)
+            self.player.command("screenshot-to-file", str(target), screenshot_mode)
+            self.show_status_overlay(tr("Screenshot saved: {}").format(target.name))
         except Exception:
             logging.exception("Could not save screenshot to %s", target)
+            self.show_status_overlay(tr("Could not save screenshot"))
 
     def _status_overlay_timeout_for_text(self, text: str) -> int:
         msg = str(text or "").strip().casefold()
@@ -1392,6 +1426,7 @@ class UIEventsMixin:
             self._set_mpv_property_safe("deband_range", config.get("deband_range", 16), allow_during_busy=True)
             self._set_mpv_property_safe("tone_mapping", config.get("tone_mapping", "auto"), allow_during_busy=True)
             self._set_mpv_property_safe("screenshot_directory", config.get("screenshot_dir", ""), allow_during_busy=True)
+            self._set_mpv_property_safe("screenshot_format", config.get("screenshot_format", "png"), allow_during_busy=True)
             if hasattr(self, "seek_slider"):
                 self.seek_slider.set_preview_enabled(self._seek_thumbnail_preview)
             if not self._seek_thumbnail_preview and hasattr(self, "hide_seek_thumbnail_preview"):
@@ -2850,6 +2885,61 @@ class UIEventsMixin:
             logging.debug("mpv key forward failed: key=%s cmd_err=%s", key_name, first_err)
             return False
 
+    def _handle_mpv_stats_key(self, event) -> bool:
+        key = event.key()
+        mods = event.modifiers()
+
+        is_shift_i = (
+            key == Qt.Key_I
+            and bool(mods & Qt.ShiftModifier)
+            and not bool(mods & Qt.ControlModifier)
+            and not bool(mods & Qt.AltModifier)
+            and not bool(mods & Qt.MetaModifier)
+        )
+
+        # Shift+I toggles the persistent stats overlay.
+        if is_shift_i:
+            try:
+                self.player.command("script-binding", "stats/display-stats-toggle")
+                self._mpv_stats_open = not bool(
+                    getattr(self, "_mpv_stats_open", False)
+                )
+                return True
+            except Exception:
+                logging.exception("Could not toggle MPV stats overlay")
+                return False
+
+        if not bool(getattr(self, "_mpv_stats_open", False)):
+            return False
+
+        # Escape closes the tracked stats mode.
+        if key == Qt.Key_Escape:
+            self._mpv_stats_open = False
+            return self._forward_key_to_mpv(event)
+
+        # Pages 1–5 and 0: send the key directly to mpv.
+        if key in {
+            Qt.Key_0,
+            Qt.Key_1,
+            Qt.Key_2,
+            Qt.Key_3,
+            Qt.Key_4,
+            Qt.Key_5,
+        }:
+            return self._forward_key_to_mpv(event)
+
+        # Let the stats overlay receive I/i and all arrows.
+        if key in {
+            Qt.Key_I,
+            Qt.Key_Left,
+            Qt.Key_Right,
+            Qt.Key_Up,
+            Qt.Key_Down,
+        }:
+            return self._forward_key_to_mpv(event)
+
+        return False
+
     def eventFilter(self, obj, event):
         try:
             if event.type() == QEvent.KeyPress and self._is_owned_by_player(obj):
@@ -2860,6 +2950,7 @@ class UIEventsMixin:
                     getattr(self, "playlist_overlay", None),
                     getattr(self, "title_bar", None),
                 }
+
                 target_window = obj.window() if isinstance(obj, QWidget) else None
                 if target_window not in owner_windows:
                     return QMainWindow.eventFilter(self, obj, event)
@@ -2867,28 +2958,43 @@ class UIEventsMixin:
                 focused = QApplication.focusWidget()
                 if isinstance(focused, QLineEdit):
                     return QMainWindow.eventFilter(self, obj, event)
+
                 if self._is_playlist_search_focused() or self._is_playlist_widget_focused():
                     return QMainWindow.eventFilter(self, obj, event)
 
-                if not self._is_app_shortcut_key(event):
-                    if self._trigger_script_binding_for_event(event):
-                        return True
-                    if self._forward_key_to_mpv(event):
-                        return True
-                    return QMainWindow.eventFilter(self, obj, event)
-                self.keyPressEvent(event)
-                return True
+                # MPV stats overlay gets priority while it is open.
+                if self._handle_mpv_stats_key(event):
+                    return True
+
+                # Existing Lua-binding support.
+                if self._trigger_script_binding_for_event(event):
+                    return True
+
+                # Existing Cadre player shortcuts.
+                if self._is_app_shortcut_key(event):
+                    self.keyPressEvent(event)
+                    return True
+
+                # Other keys go to MPV.
+                if self._forward_key_to_mpv(event):
+                    return True
+
+                return QMainWindow.eventFilter(self, obj, event)
+
             if event.type() == QEvent.DragLeave and self._is_owned_by_player(obj):
                 QTimer.singleShot(0, self._safe_end_playlist_drag_reveal_if_outside)
                 return QMainWindow.eventFilter(self, obj, event)
+
             return QMainWindow.eventFilter(self, obj, event)
+
         except RuntimeError as exc:
             logging.debug("eventFilter runtime error: %s", exc)
             return False
+
         except Exception:
             logging.exception("eventFilter failed")
             return False
-
+        
     def wheelEvent(self, event):
         if (
             hasattr(self, "playlist_overlay")

@@ -486,14 +486,49 @@ class VideoSettingsDialog(QDialog):
 
         # Screenshot Folder Group
         screenshot_group = QGroupBox(tr("Screenshots"))
-        screenshot_layout = QHBoxLayout(screenshot_group)
-        screenshot_layout.setContentsMargins(15, 15, 15, 15)
+        screenshot_layout = QFormLayout(screenshot_group)
+        screenshot_layout.setContentsMargins(15, 20, 15, 15)
         self.screenshot_dir_edit = QLineEdit(config.get("screenshot_dir", _get_default_screenshot_dir()))
         self.screenshot_dir_edit.editingFinished.connect(self.update_video)
         self.browse_screenshot_btn = QPushButton(tr("Browse"))
         self.browse_screenshot_btn.clicked.connect(self.browse_screenshot_dir)
-        screenshot_layout.addWidget(self.screenshot_dir_edit)
-        screenshot_layout.addWidget(self.browse_screenshot_btn)
+        screenshot_folder_row = QHBoxLayout()
+        screenshot_folder_row.addWidget(self.screenshot_dir_edit)
+        screenshot_folder_row.addWidget(self.browse_screenshot_btn)
+        screenshot_layout.addRow(tr("Default Folder") + ":", screenshot_folder_row)
+
+        self.screenshot_use_default_dir_check = QCheckBox(tr("Save to default folder without asking"))
+        self.screenshot_use_default_dir_check.setChecked(bool(config.get("screenshot_use_default_dir", False)))
+        self.screenshot_use_default_dir_check.toggled.connect(self.update_video)
+        screenshot_layout.addRow(self.screenshot_use_default_dir_check)
+
+        self.screenshot_format_combo = NoWheelComboBox()
+        make_value_combo(
+            self.screenshot_format_combo,
+            [
+                ("PNG", "png"),
+                ("JPEG", "jpg"),
+                ("WebP", "webp"),
+                ("JPEG XL", "jxl"),
+                ("AVIF", "avif"),
+            ],
+            config.get("screenshot_format", "png"),
+        )
+        self.screenshot_format_combo.currentIndexChanged.connect(self.update_video)
+        screenshot_layout.addRow(tr("Image Format") + ":", self.screenshot_format_combo)
+
+        self.screenshot_mode_combo = NoWheelComboBox()
+        make_value_combo(
+            self.screenshot_mode_combo,
+            [
+                (tr("Video image only"), "video"),
+                (tr("Video image + subtitles"), "subtitles"),
+                (tr("Window as shown"), "window"),
+            ],
+            config.get("screenshot_mode", "video"),
+        )
+        self.screenshot_mode_combo.currentIndexChanged.connect(self.update_video)
+        screenshot_layout.addRow(tr("Content") + ":", self.screenshot_mode_combo)
         content_layout.addWidget(screenshot_group)
 
         # Image Adjust Group
@@ -689,6 +724,9 @@ class VideoSettingsDialog(QDialog):
         self.tone_combo.setCurrentIndex(0)
         self.normalize_check.setChecked(False)
         self.screenshot_dir_edit.setText(_get_default_screenshot_dir())
+        self.screenshot_use_default_dir_check.setChecked(False)
+        self.screenshot_format_combo.setCurrentIndex(0)
+        self.screenshot_mode_combo.setCurrentIndex(0)
         self._update_deband_enabled(True)
         self.update_video()
 
@@ -744,6 +782,9 @@ class VideoSettingsDialog(QDialog):
             "audio_normalize": self.normalize_check.isChecked(),
             "audio_filter": audio_filter,
             "screenshot_dir": self.screenshot_dir_edit.text().strip(),
+            "screenshot_use_default_dir": self.screenshot_use_default_dir_check.isChecked(),
+            "screenshot_format": self.screenshot_format_combo.currentData(),
+            "screenshot_mode": self.screenshot_mode_combo.currentData(),
         }
         
         self._pending_video_config = config

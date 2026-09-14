@@ -129,6 +129,8 @@ def load_mpv_video_overrides(mpv_conf_path: str) -> dict:
                     overrides["audio_normalize"] = True
             elif key == "tone-mapping":
                 overrides["tone_mapping"] = value
+            elif key == "screenshot-format":
+                overrides["screenshot_format"] = "jpg" if value == "jpeg" else value
     except (OSError, UnicodeDecodeError):
         return {}
     return overrides
@@ -167,6 +169,7 @@ def save_mpv_video_overrides(mpv_conf_path: str, config: dict) -> None:
         "deband_threshold": "deband-threshold",
         "deband_range": "deband-range",
         "tone_mapping": "tone-mapping",
+        "screenshot_format": "screenshot-format",
         "audio_filter": "af",
     }
     values = {}

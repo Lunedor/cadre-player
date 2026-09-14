@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+from pathlib import Path
 
 ORG_NAME = "Cadre"
 APP_NAME = "Cadre Player"
@@ -149,6 +150,9 @@ VIDEO_DEBAND_THRESHOLD_KEY = "video/deband_threshold"
 VIDEO_DEBAND_RANGE_KEY = "video/deband_range"
 VIDEO_TONE_MAPPING_KEY = "video/tone_mapping"
 SCREENSHOT_DIR_KEY = "video/screenshot_dir"
+SCREENSHOT_USE_DEFAULT_DIR_KEY = "video/screenshot_use_default_dir"
+SCREENSHOT_FORMAT_KEY = "video/screenshot_format"
+SCREENSHOT_MODE_KEY = "video/screenshot_mode"
 AUDIO_NORMALIZE_KEY = "audio/normalize"
 RESUME_POS_PREFIX = "resume/"
 SUB_DELAY_PER_FILE_PREFIX = "sub_delay/"
@@ -332,6 +336,14 @@ VALID_MPV_TONE_MAPPINGS = {
     "linear",
 }
 
+VALID_SCREENSHOT_FORMATS = {"png", "jpg", "jpeg", "webp", "jxl", "avif"}
+VALID_SCREENSHOT_MODES = {"video", "subtitles", "window"}
+
+
+def _normalize_screenshot_format(value) -> str:
+    screenshot_format = _to_choice(value, "png", VALID_SCREENSHOT_FORMATS)
+    return "jpg" if screenshot_format == "jpeg" else screenshot_format
+
 
 def load_repeat(default: int = 0) -> int:
     """Load the repeat mode (0=off,1=one,2=all) from settings."""
@@ -454,6 +466,13 @@ def load_video_settings():
             allow_custom=True,
         ),
         "screenshot_dir": str(settings.value(SCREENSHOT_DIR_KEY, _get_default_screenshot_dir())),
+        "screenshot_use_default_dir": _to_bool(settings.value(SCREENSHOT_USE_DEFAULT_DIR_KEY, False), False),
+        "screenshot_format": _normalize_screenshot_format(settings.value(SCREENSHOT_FORMAT_KEY, "png")),
+        "screenshot_mode": _to_choice(
+            settings.value(SCREENSHOT_MODE_KEY, "video"),
+            "video",
+            VALID_SCREENSHOT_MODES,
+        ),
         "audio_normalize": load_audio_normalize(False),
     }
 
@@ -483,6 +502,9 @@ def save_video_settings(config: dict,
     if "deband_range" in config: settings.setValue(VIDEO_DEBAND_RANGE_KEY, int(config["deband_range"]))
     if "tone_mapping" in config: settings.setValue(VIDEO_TONE_MAPPING_KEY, str(config["tone_mapping"]))
     if "screenshot_dir" in config: settings.setValue(SCREENSHOT_DIR_KEY, str(config["screenshot_dir"]))
+    if "screenshot_use_default_dir" in config: settings.setValue(SCREENSHOT_USE_DEFAULT_DIR_KEY, bool(config["screenshot_use_default_dir"]))
+    if "screenshot_format" in config: settings.setValue(SCREENSHOT_FORMAT_KEY, str(config["screenshot_format"]))
+    if "screenshot_mode" in config: settings.setValue(SCREENSHOT_MODE_KEY, str(config["screenshot_mode"]))
     if "audio_normalize" in config: save_audio_normalize(bool(config["audio_normalize"]))
     settings.sync()
 
