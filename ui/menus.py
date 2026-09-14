@@ -307,7 +307,10 @@ def create_main_context_menu(player, pos):
 
     menu.addSeparator()
 
-    # Standalone: About
+    # Standalone: Updates & About
+    check_updates_action = menu.addAction(tr("Check for Updates..."))
+    check_updates_action.triggered.connect(player.check_for_updates_manual)
+
     about_action = menu.addAction(tr("About"))
     about_action.triggered.connect(player.open_about_dialog)
 

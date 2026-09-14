@@ -402,6 +402,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
                 app.installNativeEventFilter(self._native_media_event_filter)
 
         QTimer.singleShot(0, self._initialize_mpv_backend)
+        QTimer.singleShot(2500, self._auto_check_updates)
 
     # Explicit UI-event overrides to ensure Qt dispatch reaches UIEventsMixin.
     def eventFilter(self, obj, event):
@@ -614,6 +615,32 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
         # Keep startup hook for diagnostics only.
         # Do not override power-user mpv.conf values here.
         logging.info("MPV startup hook: preserving mpv.conf runtime properties")
+
+    def _auto_check_updates(self):
+        from .settings import load_update_auto_check, load_update_last_success_check
+        from .update_core import should_run_auto_check
+        from .update_qt import UpdateCheckWorker, UpdateAvailableDialog, UpdateProgressDialog, launch_updater
+
+        if not load_update_auto_check():
+            return
+        if not should_run_auto_check(load_update_last_success_check()):
+            return
+
+        self._auto_update_worker = UpdateCheckWorker(manual=False, parent=self)
+
+        def _on_available(release):
+            dlg = UpdateAvailableDialog(release, self)
+            if dlg.exec() == UpdateAvailableDialog.Accepted:
+                progress_dlg = UpdateProgressDialog(release, self)
+                progress_dlg.start()
+                if progress_dlg.exec() == UpdateProgressDialog.Accepted:
+                    zip_path, version = progress_dlg.result_payload()
+                    if zip_path and version:
+                        if launch_updater(zip_path, version, self):
+                            self.close()
+
+        self._auto_update_worker.signals.update_available.connect(_on_available)
+        self._auto_update_worker.start()
 
     def _can_write_mpv_property(self, allow_during_busy: bool = False) -> bool:
         if self._is_shutting_down:

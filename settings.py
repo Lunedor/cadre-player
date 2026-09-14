@@ -24,6 +24,8 @@ STREAM_AUTH_PASSWORD_KEY = "network/stream_auth_password"
 STREAM_QUALITY_KEY = "network/stream_quality"
 SESSION_RESTORE_ON_STARTUP_KEY = "player/restore_session_on_startup"
 IMPORT_INCLUDE_AUDIO_KEY = "player/import_include_audio"
+UPDATE_AUTO_CHECK_KEY = "updates/auto_check_on_startup"
+UPDATE_LAST_SUCCESS_CHECK_KEY = "updates/last_success_check"
 OS_USERNAME_KEY = "opensubtitles/os_username"
 OS_PASSWORD_KEY = "opensubtitles/os_password"
 OS_DEFAULT_LANG_KEY = "opensubtitles/os_default_lang"
@@ -822,6 +824,28 @@ def load_import_include_audio(default: bool = True) -> bool:
 def save_import_include_audio(value: bool):
     settings = get_settings()
     settings.setValue(IMPORT_INCLUDE_AUDIO_KEY, bool(value))
+    settings.sync()
+
+
+def load_update_auto_check(default: bool = True) -> bool:
+    settings = get_settings()
+    return settings.value(UPDATE_AUTO_CHECK_KEY, default, type=bool)
+
+
+def save_update_auto_check(value: bool) -> None:
+    settings = get_settings()
+    settings.setValue(UPDATE_AUTO_CHECK_KEY, bool(value))
+    settings.sync()
+
+
+def load_update_last_success_check(default: float = 0.0) -> float:
+    settings = get_settings()
+    return _to_float(settings.value(UPDATE_LAST_SUCCESS_CHECK_KEY, default), default, 0.0)
+
+
+def save_update_last_success_check(value: float) -> None:
+    settings = get_settings()
+    settings.setValue(UPDATE_LAST_SUCCESS_CHECK_KEY, float(value))
     settings.sync()
 
 

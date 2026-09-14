@@ -23,6 +23,7 @@ from ..settings import (
     SHORTCUT_ACTIONS, default_shortcuts, load_shortcuts, save_shortcuts,
 )
 from ..i18n import tr
+from ..version import APP_NAME, APP_VERSION
 from .widgets import ClickableSlider, NoWheelComboBox, NoWheelSlider
 from ..utils import OpenSubtitlesLanguagesWorker, OpenSubtitlesWorker, media_query_from_source
 
@@ -1678,7 +1679,7 @@ class AboutDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("Cadre Player")
+        title = QLabel(f"{APP_NAME} v{APP_VERSION}")
         title.setStyleSheet("font-size: 20px; font-weight: 700; color: white;")
         layout.addWidget(title)
 

@@ -649,6 +649,42 @@ class UIEventsMixin:
         dialog = AboutDialog(self)
         self._exec_modal(dialog)
 
+    def check_for_updates_manual(self):
+        from ..update_qt import UpdateCheckWorker, UpdateAvailableDialog, UpdateProgressDialog, launch_updater
+        from PySide6.QtWidgets import QMessageBox
+
+        self._update_worker = UpdateCheckWorker(manual=True, parent=self)
+
+        def _on_available(release):
+            dlg = UpdateAvailableDialog(release, self)
+            if dlg.exec() == UpdateAvailableDialog.Accepted:
+                progress_dlg = UpdateProgressDialog(release, self)
+                progress_dlg.start()
+                if progress_dlg.exec() == UpdateProgressDialog.Accepted:
+                    zip_path, version = progress_dlg.result_payload()
+                    if zip_path and version:
+                        if launch_updater(zip_path, version, self):
+                            self.close()
+
+        def _on_current():
+            QMessageBox.information(
+                self,
+                tr("No Updates Available"),
+                tr("You are using the latest version of CadrePlayer."),
+            )
+
+        def _on_error(msg):
+            QMessageBox.warning(
+                self,
+                tr("Update Check Failed"),
+                msg or tr("Could not check for updates."),
+            )
+
+        self._update_worker.signals.update_available.connect(_on_available)
+        self._update_worker.signals.current.connect(_on_current)
+        self._update_worker.signals.error.connect(_on_error)
+        self._update_worker.start()
+
     def toggle_window_maximize(self):
         if self.isMaximized():
             self.showNormal()
