@@ -11,6 +11,13 @@ from ..settings import (
 )
 from ..i18n import tr, get_supported_languages
 
+
+def _with_shortcut(player, label: str, action_id: str) -> str:
+    shortcut_fn = getattr(player, "shortcut_label", None)
+    shortcut = shortcut_fn(action_id) if callable(shortcut_fn) else ""
+    return f"{label}\t{shortcut}" if shortcut else label
+
+
 def _confirm_clear_playback_history(player) -> None:
     reply = QMessageBox.question(
         player,
@@ -48,16 +55,16 @@ def create_main_context_menu(player, pos):
     menu.setStyleSheet(MENU_STYLE)
 
     # Playback Controls
-    play_action = menu.addAction(tr("Play / Pause") + "\tSpace")
+    play_action = menu.addAction(_with_shortcut(player, tr("Play / Pause"), "play_pause"))
     play_action.triggered.connect(player.toggle_play)
 
     stop_action = menu.addAction(tr("Stop"))
     stop_action.triggered.connect(player.stop_playback)
 
-    prev_action = menu.addAction(tr("Previous") + "\tPgUp")
+    prev_action = menu.addAction(_with_shortcut(player, tr("Previous"), "previous"))
     prev_action.triggered.connect(player.prev_video)
 
-    next_action = menu.addAction(tr("Next") + "\tPgDn")
+    next_action = menu.addAction(_with_shortcut(player, tr("Next"), "next"))
     next_action.triggered.connect(player.next_video)
 
     menu.addSeparator()
@@ -117,15 +124,15 @@ def create_main_context_menu(player, pos):
         if current_arg == angle:
             action.setChecked(True)
         action.triggered.connect(lambda checked, a=angle: player.rotate_video_90(a))
-    rotate_reset = rotate.addAction(tr("Reset Rotation") + "\tCtrl+R")
+    rotate_reset = rotate.addAction(_with_shortcut(player, tr("Reset Rotation"), "rotate_reset"))
     rotate_reset.triggered.connect(player.reset_video_rotation)
 
-    mirror_h = playback_settings_menu.addAction(tr("Mirror Horizontal") + "\tX")
+    mirror_h = playback_settings_menu.addAction(_with_shortcut(player, tr("Mirror Horizontal"), "mirror_horizontal"))
     mirror_h.setCheckable(True)
     mirror_h.setChecked(bool(getattr(player, "_video_mirror_horizontal", False)))
     mirror_h.triggered.connect(player.toggle_mirror_horizontal)
 
-    mirror_v = playback_settings_menu.addAction(tr("Mirror Vertical") + "\tY")
+    mirror_v = playback_settings_menu.addAction(_with_shortcut(player, tr("Mirror Vertical"), "mirror_vertical"))
 
     mirror_v.setCheckable(True)
     mirror_v.setChecked(bool(getattr(player, "_video_mirror_vertical", False)))
@@ -141,7 +148,7 @@ def create_main_context_menu(player, pos):
     restore_on_startup_action.setChecked(bool(getattr(player, "restore_session_on_startup", False)))
     restore_on_startup_action.triggered.connect(player.toggle_restore_session_on_startup)
 
-    screenshot_action = playback_settings_menu.addAction(tr("Screenshot") + "\tS")
+    screenshot_action = playback_settings_menu.addAction(_with_shortcut(player, tr("Screenshot"), "screenshot"))
     screenshot_action.triggered.connect(player.screenshot_save_as)
 
     playback_settings_menu.addSeparator()
@@ -154,16 +161,16 @@ def create_main_context_menu(player, pos):
 
     # Audio Options
     audio_options_menu = menu.addMenu(tr("Audio Options"))
-    mute_action = audio_options_menu.addAction(tr("Mute / Unmute") + "\tM")
+    mute_action = audio_options_menu.addAction(_with_shortcut(player, tr("Mute / Unmute"), "mute"))
     mute_action.triggered.connect(player.toggle_mute)
 
-    audio_delay_down = audio_options_menu.addAction(tr("Audio Delay -0.1s") + "\tCtrl+-")
+    audio_delay_down = audio_options_menu.addAction(_with_shortcut(player, tr("Audio Delay -0.1s"), "audio_delay_down"))
     audio_delay_down.triggered.connect(lambda: player.adjust_audio_delay(-0.1))
 
-    audio_delay_up = audio_options_menu.addAction(tr("Audio Delay +0.1s") + "\tCtrl++")
+    audio_delay_up = audio_options_menu.addAction(_with_shortcut(player, tr("Audio Delay +0.1s"), "audio_delay_up"))
     audio_delay_up.triggered.connect(lambda: player.adjust_audio_delay(0.1))
 
-    audio_delay_reset = audio_options_menu.addAction(tr("Reset Audio Delay") + "\tCtrl+0")
+    audio_delay_reset = audio_options_menu.addAction(_with_shortcut(player, tr("Reset Audio Delay"), "audio_delay_reset"))
     audio_delay_reset.triggered.connect(lambda: player.adjust_audio_delay(0.0, absolute=True))
 
     audio_options_menu.addSeparator()
@@ -220,29 +227,30 @@ def create_main_context_menu(player, pos):
     add_sub_action = subtitle_options_menu.addAction(tr("Add Subtitle File")+"...")
     add_sub_action.triggered.connect(player.add_subtitle_file)
 
-    download_sub_action = subtitle_options_menu.addAction(tr("Download from OpenSubtitles") + "...\tShift+S")
+    download_sub_action = subtitle_options_menu.addAction(_with_shortcut(player, tr("Download from OpenSubtitles") + "...", "opensubtitles"))
     download_sub_action.triggered.connect(player.open_opensubtitles_dialog)
     
     sub_settings_action = subtitle_options_menu.addAction(tr("Subtitle Settings")+"...")
     sub_settings_action.triggered.connect(player.open_subtitle_settings)
 
-    menu.addAction(tr("Video Settings") + "...").triggered.connect(player.open_video_settings)
+    menu.addAction(_with_shortcut(player, tr("Video Settings") + "...", "video_settings")).triggered.connect(player.open_video_settings)
+    menu.addAction(tr("Customize Shortcuts") + "...").triggered.connect(player.open_shortcut_settings)
 
     menu.addSeparator()
 
     # Standalone
-    playlist_action = menu.addAction(tr("Toggle Playlist") + "\tP")
+    playlist_action = menu.addAction(_with_shortcut(player, tr("Toggle Playlist"), "playlist"))
     playlist_action.triggered.connect(player.toggle_playlist_panel)
 
     scan_duration_label = (
-        tr("Cancel Duration Scan") + "\tF4"
+            _with_shortcut(player, tr("Cancel Duration Scan"), "scan_durations")
         if getattr(player, "_full_duration_scan_active", False)
-        else tr("Scan All Durations") + "\tF4"
+            else _with_shortcut(player, tr("Scan All Durations"), "scan_durations")
     )
     scan_durations_action = menu.addAction(scan_duration_label)
     scan_durations_action.triggered.connect(player.toggle_full_duration_scan)
 
-    del_action = menu.addAction(tr("Delete File") + "\tDel")
+    del_action = menu.addAction(_with_shortcut(player, tr("Delete File"), "delete_file"))
     del_action.triggered.connect(player.delete_selected_file_to_trash)
 
     menu.addSeparator()
@@ -259,7 +267,7 @@ def create_main_context_menu(player, pos):
     pin_playlist.setChecked(player.pinned_playlist)
     pin_playlist.triggered.connect(player.toggle_pin_playlist)
 
-    fs_action = view_menu.addAction(tr("Fullscreen") + "\tF")
+    fs_action = view_menu.addAction(_with_shortcut(player, tr("Fullscreen"), "fullscreen"))
     fs_action.triggered.connect(player.toggle_fullscreen)
 
     ontop_action = view_menu.addAction(tr("Always On Top"))

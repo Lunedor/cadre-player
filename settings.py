@@ -27,6 +27,87 @@ IMPORT_INCLUDE_AUDIO_KEY = "player/import_include_audio"
 OS_USERNAME_KEY = "opensubtitles/os_username"
 OS_PASSWORD_KEY = "opensubtitles/os_password"
 OS_DEFAULT_LANG_KEY = "opensubtitles/os_default_lang"
+SHORTCUT_PREFIX = "shortcuts/"
+
+SHORTCUT_ACTIONS = (
+    {"id": "open_files", "label": "Open file(s)", "category": "File", "default": "Ctrl+O"},
+    {"id": "open_folder", "label": "Open folder", "category": "File", "default": "Ctrl+Shift+O"},
+    {"id": "open_url", "label": "Open URL dialog", "category": "File", "default": "Ctrl+L"},
+    {"id": "play_pause", "label": "Play / Pause", "category": "Playback", "default": "Space"},
+    {"id": "stop", "label": "Stop", "category": "Playback", "default": ""},
+    {"id": "previous", "label": "Previous", "category": "Playback", "default": "PgUp"},
+    {"id": "next", "label": "Next", "category": "Playback", "default": "PgDown"},
+    {"id": "seek_backward", "label": "Seek Backward", "category": "Playback", "default": "Left"},
+    {"id": "seek_forward", "label": "Seek Forward", "category": "Playback", "default": "Right"},
+    {"id": "frame_back", "label": "Frame Back", "category": "Playback", "default": ","},
+    {"id": "frame_step", "label": "Frame Step", "category": "Playback", "default": "."},
+    {"id": "speed_down", "label": "Speed Down", "category": "Playback", "default": "["},
+    {"id": "speed_up", "label": "Speed Up", "category": "Playback", "default": "]"},
+    {"id": "scan_durations", "label": "Scan All Durations", "category": "Playback", "default": "F4"},
+    {"id": "volume_up", "label": "Volume Up", "category": "Audio", "default": "Up"},
+    {"id": "volume_down", "label": "Volume Down", "category": "Audio", "default": "Down"},
+    {"id": "mute", "label": "Mute / Unmute", "category": "Audio", "default": "M"},
+    {"id": "audio_delay_down", "label": "Audio Delay -0.1s", "category": "Audio", "default": "Ctrl+-"},
+    {"id": "audio_delay_up", "label": "Audio Delay +0.1s", "category": "Audio", "default": "Ctrl++"},
+    {"id": "audio_delay_reset", "label": "Reset Audio Delay", "category": "Audio", "default": "Ctrl+0"},
+    {"id": "fullscreen", "label": "Toggle fullscreen", "category": "View", "default": "F"},
+    {"id": "fullscreen_return", "label": "Toggle fullscreen (Return)", "category": "View", "default": "Return"},
+    {"id": "playlist", "label": "Toggle Playlist", "category": "View", "default": "P"},
+    {"id": "video_settings", "label": "Video Settings", "category": "View", "default": "V"},
+    {"id": "zoom_in", "label": "Zoom In", "category": "Video", "default": "+"},
+    {"id": "zoom_out", "label": "Zoom Out", "category": "Video", "default": "-"},
+    {"id": "zoom_reset", "label": "Zoom Reset", "category": "Video", "default": "0"},
+    {"id": "pan_left", "label": "Pan Left", "category": "Video", "default": "4"},
+    {"id": "pan_right", "label": "Pan Right", "category": "Video", "default": "6"},
+    {"id": "pan_up", "label": "Pan Up", "category": "Video", "default": "8"},
+    {"id": "pan_down", "label": "Pan Down", "category": "Video", "default": "2"},
+    {"id": "brightness_up", "label": "Brightness Up", "category": "Video", "default": "B"},
+    {"id": "brightness_down", "label": "Brightness Down", "category": "Video", "default": "Shift+B"},
+    {"id": "rotate", "label": "Rotate", "category": "Video", "default": "R"},
+    {"id": "rotate_reset", "label": "Reset Rotation", "category": "Video", "default": "Ctrl+R"},
+    {"id": "mirror_horizontal", "label": "Mirror Horizontal", "category": "Video", "default": "X"},
+    {"id": "mirror_vertical", "label": "Mirror Vertical", "category": "Video", "default": "Y"},
+    {"id": "screenshot", "label": "Screenshot", "category": "Video", "default": "S"},
+    {"id": "remove_playlist_item", "label": "Remove from playlist", "category": "Playlist", "default": "Delete"},
+    {"id": "delete_file", "label": "Delete file to recycle bin", "category": "Playlist", "default": "Shift+Delete"},
+    {"id": "opensubtitles", "label": "Download from OpenSubtitles", "category": "Subtitles", "default": "Shift+S"},
+    {"id": "sub_delay_down", "label": "Subtitle Delay -0.1s", "category": "Subtitles", "default": "G"},
+    {"id": "sub_delay_up", "label": "Subtitle Delay +0.1s", "category": "Subtitles", "default": "H"},
+    {"id": "sub_size_down", "label": "Subtitle Size Down", "category": "Subtitles", "default": "J"},
+    {"id": "sub_size_up", "label": "Subtitle Size Up", "category": "Subtitles", "default": "K"},
+    {"id": "sub_pos_down", "label": "Subtitle Position Up", "category": "Subtitles", "default": "U"},
+    {"id": "sub_pos_up", "label": "Subtitle Position Down", "category": "Subtitles", "default": "I"},
+    {"id": "mpv_stats", "label": "MPV Stats Overlay", "category": "Advanced", "default": "Shift+I"},
+)
+
+
+def default_shortcuts() -> dict[str, str]:
+    return {str(item["id"]): str(item["default"]) for item in SHORTCUT_ACTIONS}
+
+
+def load_shortcuts() -> dict[str, str]:
+    settings = get_settings()
+    shortcuts = default_shortcuts()
+    for action_id in shortcuts:
+        shortcuts[action_id] = str(
+            settings.value(f"{SHORTCUT_PREFIX}{action_id}", shortcuts[action_id]) or ""
+        ).strip()
+    return shortcuts
+
+
+def save_shortcuts(shortcuts: dict[str, str]) -> None:
+    settings = get_settings()
+    defaults = default_shortcuts()
+    for action_id, default_value in defaults.items():
+        value = str(shortcuts.get(action_id, default_value) or "").strip()
+        settings.setValue(f"{SHORTCUT_PREFIX}{action_id}", value)
+    settings.sync()
+
+
+def reset_shortcuts_to_defaults() -> dict[str, str]:
+    shortcuts = default_shortcuts()
+    save_shortcuts(shortcuts)
+    return shortcuts
 
 def _to_int(value, default: int, min_value: int | None = None, max_value: int | None = None) -> int:
     try:
@@ -399,6 +480,7 @@ VIDEO_ROTATE_KEY = "video/rotate"
 VIDEO_MIRROR_HORIZONTAL_KEY = "video/mirror_horizontal"
 VIDEO_MIRROR_VERTICAL_KEY = "video/mirror_vertical"
 SEEK_THUMBNAIL_PREVIEW_KEY = "video/seek_thumbnail_preview"
+SEEK_DURATION_KEY = "video/seek_duration"
 VIDEO_HWDEC_KEY = "video/hwdec"
 VIDEO_RENDERER_KEY = "video/renderer"
 VIDEO_GPU_API_KEY = "video/gpu_api"
@@ -419,6 +501,7 @@ def load_video_settings():
         "mirror_horizontal": _to_bool(settings.value(VIDEO_MIRROR_HORIZONTAL_KEY, False), False),
         "mirror_vertical": _to_bool(settings.value(VIDEO_MIRROR_VERTICAL_KEY, False), False),
         "seek_thumbnail_preview": _to_bool(settings.value(SEEK_THUMBNAIL_PREVIEW_KEY, False), False),
+        "seek_duration": _to_int(settings.value(SEEK_DURATION_KEY, 5), 5, 1, 60),
         "hwdec": _to_choice(
             settings.value(VIDEO_HWDEC_KEY, "auto-safe"),
             "auto-safe",
@@ -490,6 +573,7 @@ def save_video_settings(config: dict,
     if "mirror_horizontal" in config: settings.setValue(VIDEO_MIRROR_HORIZONTAL_KEY, bool(config["mirror_horizontal"]))
     if "mirror_vertical" in config: settings.setValue(VIDEO_MIRROR_VERTICAL_KEY, bool(config["mirror_vertical"]))
     if "seek_thumbnail_preview" in config: settings.setValue(SEEK_THUMBNAIL_PREVIEW_KEY, bool(config["seek_thumbnail_preview"]))
+    if "seek_duration" in config: settings.setValue(SEEK_DURATION_KEY, _to_int(config["seek_duration"], 5, 1, 60))
     if "hwdec" in config: settings.setValue(VIDEO_HWDEC_KEY, config["hwdec"])
     if "renderer" in config: settings.setValue(VIDEO_RENDERER_KEY, config["renderer"])
     if "gpu_api" in config: settings.setValue(VIDEO_GPU_API_KEY, config["gpu_api"])

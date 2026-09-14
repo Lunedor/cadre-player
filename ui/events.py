@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from .dialogs import (
     OpenSubtitlesDialog,
     OpenSubtitlesSettingsDialog,
+    ShortcutSettingsDialog,
     SubtitleSettingsDialog,
     URLInputDialog,
     VideoSettingsDialog,
@@ -66,6 +67,7 @@ from ..settings import (
     save_shuffle,
     save_sub_settings,
     save_stream_quality,
+    load_shortcuts,
     save_video_settings,
     save_volume,
 )
@@ -758,6 +760,12 @@ class UIEventsMixin:
         dialog = VideoSettingsDialog(self, self)
         self._exec_modal(dialog)
 
+    def open_shortcut_settings(self):
+        dialog = ShortcutSettingsDialog(self)
+        if self._exec_modal(dialog):
+            self._cadre_shortcuts = load_shortcuts()
+            self.show_status_overlay(tr("Shortcuts updated"))
+
     def open_opensubtitles_settings_dialog(self):
         dialog = OpenSubtitlesSettingsDialog(self)
         self._exec_modal(dialog)
@@ -1259,6 +1267,17 @@ class UIEventsMixin:
                 self.show_status_overlay(tr("Seek {}s").format(seconds))
         except Exception:
             return
+
+    def _shortcut_seek_duration(self) -> int:
+        config = getattr(self, "_video_config", None)
+        if not isinstance(config, dict):
+            config = load_video_settings()
+            self._video_config = dict(config)
+        try:
+            duration = int(config.get("seek_duration", 5))
+        except (TypeError, ValueError):
+            duration = 5
+        return max(1, min(60, duration))
 
     def toggle_play(self):
         if not self._has_mpv_player():
@@ -2889,16 +2908,8 @@ class UIEventsMixin:
         key = event.key()
         mods = event.modifiers()
 
-        is_shift_i = (
-            key == Qt.Key_I
-            and bool(mods & Qt.ShiftModifier)
-            and not bool(mods & Qt.ControlModifier)
-            and not bool(mods & Qt.AltModifier)
-            and not bool(mods & Qt.MetaModifier)
-        )
-
-        # Shift+I toggles the persistent stats overlay.
-        if is_shift_i:
+        # The stats overlay gets first chance at its configured toggle key.
+        if self._shortcut_matches(event, "mpv_stats"):
             try:
                 self.player.command("script-binding", "stats/display-stats-toggle")
                 self._mpv_stats_open = not bool(
@@ -3169,6 +3180,127 @@ class UIEventsMixin:
             return False
         return focused is self.playlist_widget or self.playlist_widget.isAncestorOf(focused)
 
+    def _shortcut_map(self) -> dict[str, str]:
+        shortcuts = getattr(self, "_cadre_shortcuts", None)
+        if not isinstance(shortcuts, dict):
+            shortcuts = load_shortcuts()
+            self._cadre_shortcuts = shortcuts
+        return shortcuts
+
+    def shortcut_label(self, action_id: str) -> str:
+        return str(self._shortcut_map().get(action_id, "") or "").strip()
+
+    def _shortcut_compare_key(self, text: str) -> str:
+        raw = str(text or "").strip()
+        if raw == "+":
+            parts = ["+"]
+        elif raw.endswith("++"):
+            parts = [p.strip() for p in raw[:-2].split("+") if p.strip()] + ["+"]
+        else:
+            parts = [p.strip() for p in raw.split("+") if p.strip()]
+        if not parts:
+            return ""
+        names = {
+            "pgup": "pageup",
+            "pgdown": "pagedown",
+            "pgdn": "pagedown",
+            "del": "delete",
+            "esc": "escape",
+            "space": "space",
+            "return": "return",
+            "enter": "return",
+        }
+        mods = []
+        base = parts[-1].lower()
+        for part in parts[:-1]:
+            token = part.lower()
+            if token in {"ctrl", "control"}:
+                mods.append("ctrl")
+            elif token == "alt":
+                mods.append("alt")
+            elif token == "shift":
+                mods.append("shift")
+            elif token in {"meta", "win"}:
+                mods.append("meta")
+        order = {"ctrl": 0, "alt": 1, "shift": 2, "meta": 3}
+        mods = sorted(set(mods), key=lambda item: order[item])
+        return "+".join(mods + [names.get(base, base)])
+
+    def _qt_event_to_shortcut_text(self, event) -> str:
+        key = event.key()
+        if key in {
+            Qt.Key_Shift,
+            Qt.Key_Control,
+            Qt.Key_Alt,
+            Qt.Key_Meta,
+            Qt.Key_AltGr,
+        }:
+            return ""
+
+        special = {
+            Qt.Key_Space: "Space",
+            Qt.Key_Enter: "Return",
+            Qt.Key_Return: "Return",
+            Qt.Key_Escape: "Escape",
+            Qt.Key_Tab: "Tab",
+            Qt.Key_Backspace: "Backspace",
+            Qt.Key_Delete: "Delete",
+            Qt.Key_Insert: "Insert",
+            Qt.Key_Home: "Home",
+            Qt.Key_End: "End",
+            Qt.Key_PageUp: "PgUp",
+            Qt.Key_PageDown: "PgDown",
+            Qt.Key_Left: "Left",
+            Qt.Key_Right: "Right",
+            Qt.Key_Up: "Up",
+            Qt.Key_Down: "Down",
+            Qt.Key_Plus: "+",
+            Qt.Key_Equal: "=",
+            Qt.Key_Minus: "-",
+            Qt.Key_Period: ".",
+            Qt.Key_Comma: ",",
+            Qt.Key_BracketRight: "]",
+            Qt.Key_BracketLeft: "[",
+        }
+        base = special.get(key)
+        if base is None and Qt.Key_F1 <= key <= Qt.Key_F12:
+            base = f"F{key - Qt.Key_F1 + 1}"
+        elif base is None and Qt.Key_A <= key <= Qt.Key_Z:
+            base = chr(ord("A") + (key - Qt.Key_A))
+        elif base is None and Qt.Key_0 <= key <= Qt.Key_9:
+            base = str(key - Qt.Key_0)
+        elif base is None:
+            text = event.text() or ""
+            if not text or not text.isprintable():
+                return ""
+            base = "Space" if text == " " else text
+
+        mods = event.modifiers()
+        parts = []
+        if mods & Qt.ControlModifier:
+            parts.append("Ctrl")
+        if mods & Qt.AltModifier:
+            parts.append("Alt")
+        if mods & Qt.MetaModifier:
+            parts.append("Meta")
+        if mods & Qt.ShiftModifier and (base.isalpha() or len(base) > 1):
+            parts.append("Shift")
+        parts.append(base)
+        return "+".join(parts)
+
+    def _shortcut_matches(self, event, action_id: str) -> bool:
+        shortcut = self.shortcut_label(action_id)
+        if not shortcut:
+            return False
+        event_key = self._shortcut_compare_key(self._qt_event_to_shortcut_text(event))
+        return bool(event_key and event_key == self._shortcut_compare_key(shortcut))
+
+    def _is_app_shortcut_key(self, event) -> bool:
+        return any(
+            self._shortcut_matches(event, str(action_id))
+            for action_id in self._shortcut_map()
+        )
+
     def _handle_escape_shortcuts(self, key) -> bool:
         if key == Qt.Key_Escape:
             if hasattr(self, "playlist_overlay") and self.playlist_overlay.isVisible() and not self.pinned_playlist:
@@ -3187,24 +3319,24 @@ class UIEventsMixin:
             if key in (Qt.Key_Enter, Qt.Key_Return):
                 self.play_selected_item()
                 return True
-            if key == Qt.Key_Delete:
-                if event.modifiers() & Qt.ShiftModifier:
-                    self.delete_to_trash()
-                else:
-                    self.remove_selected_from_playlist()
+            if self._shortcut_matches(event, "delete_file"):
+                self.delete_to_trash()
+                return True
+            if self._shortcut_matches(event, "remove_playlist_item"):
+                self.remove_selected_from_playlist()
                 return True
             QMainWindow.keyPressEvent(self, event)
             return True
         return False
 
-    def _handle_open_shortcuts(self, key, mods) -> bool:
-        if key == Qt.Key_O and (mods & Qt.ControlModifier) and (mods & Qt.ShiftModifier):
+    def _handle_open_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "open_folder"):
             self.add_folder_dialog()
             return True
-        if key == Qt.Key_O and (mods & Qt.ControlModifier):
+        if self._shortcut_matches(event, "open_files"):
             self.add_files_dialog()
             return True
-        if key == Qt.Key_L and (mods & Qt.ControlModifier):
+        if self._shortcut_matches(event, "open_url"):
             self.open_url_dialog()
             return True
         return False
@@ -3253,82 +3385,85 @@ class UIEventsMixin:
             else:
                 self.stop_playback()
             return True
-        if key == Qt.Key_Right:
-            self.seek_relative(5)
+        if self._shortcut_matches(event, "seek_forward"):
+            self.seek_relative(self._shortcut_seek_duration())
             return True
-        if key == Qt.Key_Left:
-            self.seek_relative(-5)
+        if self._shortcut_matches(event, "seek_backward"):
+            self.seek_relative(-self._shortcut_seek_duration())
             return True
-        if key == Qt.Key_Up:
+        if self._shortcut_matches(event, "volume_up"):
             self.vol_slider.setValue(self.vol_slider.value() + 5)
             return True
-        if key == Qt.Key_Down:
+        if self._shortcut_matches(event, "volume_down"):
             self.vol_slider.setValue(self.vol_slider.value() - 5)
             return True
-        if key == Qt.Key_PageUp:
+        if self._shortcut_matches(event, "previous"):
             self.prev_video()
             return True
-        if key == Qt.Key_PageDown:
+        if self._shortcut_matches(event, "next"):
             self.next_video()
             return True
-        if key == Qt.Key_F4:
+        if self._shortcut_matches(event, "scan_durations"):
             self.toggle_full_duration_scan()
             return True
-        if key == Qt.Key_Space:
+        if self._shortcut_matches(event, "play_pause"):
             self.toggle_play()
             return True
-        if key in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_F):
+        if self._shortcut_matches(event, "stop"):
+            self.stop_playback()
+            return True
+        if self._shortcut_matches(event, "fullscreen") or self._shortcut_matches(event, "fullscreen_return"):
             self.toggle_fullscreen()
             return True
-        if key == Qt.Key_Delete:
-            if event.modifiers() & Qt.ShiftModifier:
-                self.delete_to_trash()
-            else:
-                self.remove_selected_from_playlist()
+        if self._shortcut_matches(event, "delete_file"):
+            self.delete_to_trash()
             return True
-        if key == Qt.Key_Period:
+        if self._shortcut_matches(event, "remove_playlist_item"):
+            self.remove_selected_from_playlist()
+            return True
+        if self._shortcut_matches(event, "frame_step"):
             self.player.command("frame-step")
             return True
-        if key == Qt.Key_Comma:
+        if self._shortcut_matches(event, "frame_back"):
             self.player.command("frame-back-step")
             return True
-        if key == Qt.Key_BracketRight:
+        if self._shortcut_matches(event, "speed_up"):
             self.change_speed_step(1)
             return True
-        if key == Qt.Key_BracketLeft:
+        if self._shortcut_matches(event, "speed_down"):
             self.change_speed_step(-1)
             return True
-        if key == Qt.Key_M:
+        if self._shortcut_matches(event, "mute"):
             self.toggle_mute()
             return True
-        if key == Qt.Key_S and not (event.modifiers() & Qt.ShiftModifier):
+        if self._shortcut_matches(event, "screenshot"):
             self.screenshot_save_as()
             return True
-        if key == Qt.Key_P:
+        if self._shortcut_matches(event, "playlist"):
             self.toggle_playlist_panel()
             return True
-        if key == Qt.Key_V:
+        if self._shortcut_matches(event, "video_settings"):
             self.open_video_settings()
             return True
         return False
 
-    def _handle_zoom_shortcuts(self, key, mods=None) -> bool:
+    def _handle_zoom_shortcuts(self, event) -> bool:
         # Skip zoom keys when Ctrl is held — those are audio sync shortcuts
-        if mods is not None and (mods & Qt.ControlModifier):
+        if event.modifiers() & Qt.ControlModifier:
             return False
-        if key == Qt.Key_Plus or key == Qt.Key_Equal:
+        if self._shortcut_matches(event, "zoom_in"):
             self.window_zoom += 0.1
             self.show_status_overlay(tr("Zoom: {}").format(f"{self.window_zoom:.1f}"))
             self._save_zoom_setting()
             self.sync_size()
             return True
-        if key == Qt.Key_Minus:
+        if self._shortcut_matches(event, "zoom_out"):
             self.window_zoom = max(-2.0, self.window_zoom - 0.1)
             self.show_status_overlay(tr("Zoom: {}").format(f"{self.window_zoom:.1f}"))
             self._save_zoom_setting()
             self.sync_size()
             return True
-        if key == Qt.Key_0:
+        if self._shortcut_matches(event, "zoom_reset"):
             self.window_zoom = 0.0
             self.show_status_overlay(tr("Zoom Reset"))
             self._save_zoom_setting()
@@ -3338,26 +3473,26 @@ class UIEventsMixin:
             return True
         return False
 
-    def _handle_pan_shortcuts(self, key) -> bool:
-        if key == Qt.Key_4:
+    def _handle_pan_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "pan_left"):
             if (self.player.video_zoom or 0.0) > 0.0:
                 next_x = min(3.0, (self.player.video_pan_x or 0.0) + 0.05)
                 self._set_mpv_property_safe("video_pan_x", next_x, min_interval_sec=0.03)
                 self.show_status_overlay(tr("Pan Left"))
             return True
-        if key == Qt.Key_6:
+        if self._shortcut_matches(event, "pan_right"):
             if (self.player.video_zoom or 0.0) > 0.0:
                 next_x = max(-3.0, (self.player.video_pan_x or 0.0) - 0.05)
                 self._set_mpv_property_safe("video_pan_x", next_x, min_interval_sec=0.03)
                 self.show_status_overlay(tr("Pan Right"))
             return True
-        if key == Qt.Key_8:
+        if self._shortcut_matches(event, "pan_up"):
             if (self.player.video_zoom or 0.0) > 0.0:
                 next_y = min(3.0, (self.player.video_pan_y or 0.0) + 0.05)
                 self._set_mpv_property_safe("video_pan_y", next_y, min_interval_sec=0.03)
                 self.show_status_overlay(tr("Pan Up"))
             return True
-        if key == Qt.Key_2:
+        if self._shortcut_matches(event, "pan_down"):
             if (self.player.video_zoom or 0.0) > 0.0:
                 next_y = max(-3.0, (self.player.video_pan_y or 0.0) - 0.05)
                 self._set_mpv_property_safe("video_pan_y", next_y, min_interval_sec=0.03)
@@ -3365,13 +3500,13 @@ class UIEventsMixin:
             return True
         return False
 
-    def _handle_brightness_shortcut(self, key, mods) -> bool:
-        if key != Qt.Key_B:
-            return False
-        if mods & Qt.ShiftModifier:
+    def _handle_brightness_shortcut(self, event) -> bool:
+        if self._shortcut_matches(event, "brightness_down"):
             self.player.brightness = max(-100, self.player.brightness - 5)
-        else:
+        elif self._shortcut_matches(event, "brightness_up"):
             self.player.brightness = min(100, self.player.brightness + 5)
+        else:
+            return False
         cfg = load_video_settings()
         cfg["brightness"] = int(self.player.brightness or 0)
         save_video_settings(cfg,changed_keys={"brightness"})
@@ -3430,75 +3565,73 @@ class UIEventsMixin:
             )
         )
 
-    def _handle_rotation_shortcuts(self, key, mods) -> bool:
-        if key == Qt.Key_R and (mods & Qt.ControlModifier):
+    def _handle_rotation_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "rotate_reset"):
             self.reset_video_rotation()
             return True
-        if key == Qt.Key_R:
+        if self._shortcut_matches(event, "rotate"):
             self.rotate_video_90()
             return True
         return False
 
-    def _handle_mirror_shortcuts(self, key) -> bool:
-        if key == Qt.Key_X:
+    def _handle_mirror_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "mirror_horizontal"):
             self.toggle_mirror_horizontal()
             return True
-        if key == Qt.Key_Y:
+        if self._shortcut_matches(event, "mirror_vertical"):
             self.toggle_mirror_vertical()
             return True
         return False
 
-    def _handle_subtitle_runtime_shortcuts(self, key, mods) -> bool:
-        if key == Qt.Key_S and (mods & Qt.ShiftModifier):
+    def _handle_subtitle_runtime_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "opensubtitles"):
             self.open_opensubtitles_dialog()
             return True
-        if key == Qt.Key_G:
+        if self._shortcut_matches(event, "sub_delay_down"):
             self.player.sub_delay -= 0.1
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Delay: {}s").format(f"{self.player.sub_delay:.1f}"))
             return True
-        if key == Qt.Key_H:
+        if self._shortcut_matches(event, "sub_delay_up"):
             self.player.sub_delay += 0.1
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Delay: {}s").format(f"{self.player.sub_delay:.1f}"))
             return True
-        if key == Qt.Key_J:
+        if self._shortcut_matches(event, "sub_size_down"):
             self.player.sub_font_size = max(1, self.player.sub_font_size - 1)
             self.player.sub_scale = max(0.2, min(5.0, float(self.player.sub_font_size) / 55.0))
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Size: {}").format(self.player.sub_font_size))
             return True
-        if key == Qt.Key_K:
+        if self._shortcut_matches(event, "sub_size_up"):
             self.player.sub_font_size = min(120, self.player.sub_font_size + 1)
             self.player.sub_scale = max(0.2, min(5.0, float(self.player.sub_font_size) / 55.0))
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Size: {}").format(self.player.sub_font_size))
             return True
-        if key == Qt.Key_I and (mods & Qt.ShiftModifier):
+        if self._shortcut_matches(event, "mpv_stats"):
             self.toggle_mpv_stats_overlay()
             return True
-        if key == Qt.Key_U:
+        if self._shortcut_matches(event, "sub_pos_down"):
             self.player.sub_pos = max(0, self.player.sub_pos - 1)
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Pos: {}").format(self.player.sub_pos))
             return True
-        if key == Qt.Key_I:
+        if self._shortcut_matches(event, "sub_pos_up"):
             self.player.sub_pos = min(100, self.player.sub_pos + 1)
             self._persist_runtime_subtitle_settings()
             self.show_status_overlay(tr("Pos: {}").format(self.player.sub_pos))
             return True
         return False
 
-    def _handle_audio_sync_shortcuts(self, key, mods) -> bool:
-        if not (mods & Qt.ControlModifier):
-            return False
-        if key in (Qt.Key_Plus, Qt.Key_Equal):
+    def _handle_audio_sync_shortcuts(self, event) -> bool:
+        if self._shortcut_matches(event, "audio_delay_up"):
             self.adjust_audio_delay(0.1)
             return True
-        if key == Qt.Key_Minus:
+        if self._shortcut_matches(event, "audio_delay_down"):
             self.adjust_audio_delay(-0.1)
             return True
-        if key == Qt.Key_0:
+        if self._shortcut_matches(event, "audio_delay_reset"):
             self.adjust_audio_delay(0.0, absolute=True)
             return True
         return False
@@ -3511,23 +3644,23 @@ class UIEventsMixin:
             return
         if self._handle_playlist_focus_shortcuts(event, key):
             return
-        if self._handle_open_shortcuts(key, mods):
+        if self._handle_open_shortcuts(event):
             return
         if self._handle_transport_shortcuts(event, key):
             return
-        if self._handle_audio_sync_shortcuts(key, mods):
+        if self._handle_audio_sync_shortcuts(event):
             return
-        if self._handle_zoom_shortcuts(key, mods):
+        if self._handle_zoom_shortcuts(event):
             return
-        if self._handle_pan_shortcuts(key):
+        if self._handle_pan_shortcuts(event):
             return
-        if self._handle_brightness_shortcut(key, mods):
+        if self._handle_brightness_shortcut(event):
             return
-        if self._handle_rotation_shortcuts(key, mods):
+        if self._handle_rotation_shortcuts(event):
             return
-        if self._handle_mirror_shortcuts(key):
+        if self._handle_mirror_shortcuts(event):
             return
-        if self._handle_subtitle_runtime_shortcuts(key, mods):
+        if self._handle_subtitle_runtime_shortcuts(event):
             return
 
         QMainWindow.keyPressEvent(self, event)

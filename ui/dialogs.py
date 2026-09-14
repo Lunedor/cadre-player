@@ -2,10 +2,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
     QComboBox, QSlider, QPushButton, QGroupBox, QFormLayout, QLineEdit,
     QCheckBox, QListWidget, QListWidgetItem, QMessageBox, QListView, QSizePolicy,
-    QFileDialog, QScrollArea, QApplication, QWidget,
+    QFileDialog, QScrollArea, QApplication, QWidget, QTableWidget, QTableWidgetItem,
+    QHeaderView, QKeySequenceEdit,
 )
 from PySide6.QtCore import Qt, Signal, QStandardPaths
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QKeySequence
 import re
 from .styles import DIALOG_STYLE
 from ..settings import (
@@ -19,6 +20,7 @@ from ..settings import (
     save_sub_delay_for_file,
     load_stream_auth_settings, save_stream_auth_settings,
     load_opensubtitles_settings, save_opensubtitles_settings,
+    SHORTCUT_ACTIONS, default_shortcuts, load_shortcuts, save_shortcuts,
 )
 from ..i18n import tr
 from .widgets import ClickableSlider, NoWheelComboBox, NoWheelSlider
@@ -484,6 +486,34 @@ class VideoSettingsDialog(QDialog):
 
         self._original_video_config["audio_filter"] = original_audio_filter
 
+        # Playback Group
+        playback_group = QGroupBox(tr("Playback"))
+        playback_layout = QFormLayout(playback_group)
+        playback_layout.setContentsMargins(15, 20, 15, 15)
+
+        seek_duration_layout = QHBoxLayout()
+        self.seek_duration_minus = QPushButton("-")
+        self.seek_duration_minus.setObjectName("AdjustBtn")
+        self.seek_duration_minus.clicked.connect(lambda: self.adjust_seek_duration(-1))
+
+        self.seek_duration_label = QLabel(
+            tr("{} s").format(int(config.get("seek_duration", 5)))
+        )
+        self.seek_duration_label.setObjectName("ValLabel")
+        self.seek_duration_label.setAlignment(Qt.AlignCenter)
+
+        self.seek_duration_plus = QPushButton("+")
+        self.seek_duration_plus.setObjectName("AdjustBtn")
+        self.seek_duration_plus.clicked.connect(lambda: self.adjust_seek_duration(1))
+
+        seek_duration_layout.addWidget(self.seek_duration_minus)
+        seek_duration_layout.addWidget(self.seek_duration_label)
+        seek_duration_layout.addWidget(self.seek_duration_plus)
+        seek_duration_layout.addStretch()
+        playback_layout.addRow(tr("Seek Step") + ":", seek_duration_layout)
+
+        content_layout.addWidget(playback_group)
+
         # Screenshot Folder Group
         screenshot_group = QGroupBox(tr("Screenshots"))
         screenshot_layout = QFormLayout(screenshot_group)
@@ -700,6 +730,18 @@ class VideoSettingsDialog(QDialog):
         self.zoom_label.setText(f"{new_val:.1f}")
         self.update_video()
 
+    def adjust_seek_duration(self, delta):
+        val = self._seek_duration_value()
+        new_val = max(1, min(60, val + delta))
+        self.seek_duration_label.setText(tr("{} s").format(new_val))
+        self.update_video()
+
+    def _seek_duration_value(self) -> int:
+        match = re.search(r"\d+", self.seek_duration_label.text())
+        if not match:
+            return 5
+        return max(1, min(60, int(match.group(0))))
+
     def reset_to_defaults(self):
         self.bright_slider.setValue(0)
         self.contrast_slider.setValue(0)
@@ -710,6 +752,7 @@ class VideoSettingsDialog(QDialog):
         self.mirror_h_check.setChecked(False)
         self.mirror_v_check.setChecked(False)
         self.seek_thumb_check.setChecked(False)
+        self.seek_duration_label.setText(tr("{} s").format(5))
         self.aspect_combo.setCurrentText("auto")
         self.hwdec_combo.setCurrentText("auto-safe")
         self.renderer_combo.setCurrentIndex(0)
@@ -768,6 +811,7 @@ class VideoSettingsDialog(QDialog):
             "mirror_horizontal": self.mirror_h_check.isChecked(),
             "mirror_vertical": self.mirror_v_check.isChecked(),
             "seek_thumbnail_preview": self.seek_thumb_check.isChecked(),
+            "seek_duration": self._seek_duration_value(),
             "hwdec": self.hwdec_combo.currentData(),
             "renderer": self.renderer_combo.currentData(),
             "gpu_api": self.gpu_api_combo.currentData(),
@@ -818,6 +862,225 @@ class VideoSettingsDialog(QDialog):
             self._original_aspect,
             show_toast=False,
         )
+
+def _shortcut_compare_key(text: str) -> str:
+    raw = str(text or "").strip()
+    if raw == "+":
+        parts = ["+"]
+    elif raw.endswith("++"):
+        parts = [p.strip() for p in raw[:-2].split("+") if p.strip()] + ["+"]
+    else:
+        parts = [p.strip() for p in raw.split("+") if p.strip()]
+    if not parts:
+        return ""
+    names = {
+        "pgup": "pageup",
+        "pgdown": "pagedown",
+        "pgdn": "pagedown",
+        "del": "delete",
+        "esc": "escape",
+        "space": "space",
+        "return": "return",
+        "enter": "return",
+    }
+    mods = []
+    base = parts[-1].lower()
+    for part in parts[:-1]:
+        token = part.lower()
+        if token in {"ctrl", "control"}:
+            mods.append("ctrl")
+        elif token == "alt":
+            mods.append("alt")
+        elif token == "shift":
+            mods.append("shift")
+        elif token in {"meta", "win"}:
+            mods.append("meta")
+    order = {"ctrl": 0, "alt": 1, "shift": 2, "meta": 3}
+    mods = sorted(set(mods), key=lambda item: order[item])
+    return "+".join(mods + [names.get(base, base)])
+
+
+class ShortcutSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Customize Shortcuts"))
+        self.setMinimumSize(640, 520)
+        self.setStyleSheet(
+            DIALOG_STYLE
+            + """
+            QTableWidget#ShortcutTable {
+                background-color: rgba(255, 255, 255, 0.035);
+                alternate-background-color: rgba(255, 255, 255, 0.055);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 8px;
+                color: rgba(255, 255, 255, 0.92);
+                gridline-color: rgba(255, 255, 255, 0.07);
+                outline: none;
+                selection-background-color: rgba(255, 255, 255, 0.12);
+                selection-color: white;
+            }
+
+            QTableWidget#ShortcutTable::item {
+                border: 0;
+                padding: 7px 10px;
+            }
+
+            QTableWidget#ShortcutTable::item:hover {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
+
+            QTableWidget#ShortcutTable::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: white;
+            }
+
+            QTableWidget#ShortcutTable QHeaderView::section {
+                background-color: rgba(255, 255, 255, 0.07);
+                border: 0;
+                border-right: 1px solid rgba(255, 255, 255, 0.08);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+                color: rgba(255, 255, 255, 0.72);
+                font-weight: 600;
+                padding: 8px 10px;
+            }
+
+            QTableWidget#ShortcutTable QTableCornerButton::section {
+                background-color: rgba(255, 255, 255, 0.07);
+                border: 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+            }
+
+            QKeySequenceEdit#ShortcutEditor {
+                background-color: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 5px;
+                color: white;
+                min-height: 26px;
+                padding: 3px 8px;
+                selection-background-color: rgba(255, 255, 255, 0.16);
+                selection-color: white;
+            }
+
+            QKeySequenceEdit#ShortcutEditor:focus {
+                background-color: rgba(255, 255, 255, 0.09);
+                border: 1px solid rgba(255, 255, 255, 0.30);
+            }
+            """
+        )
+
+        self._editors: dict[str, QKeySequenceEdit] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        self.table = QTableWidget(len(SHORTCUT_ACTIONS), 3, self)
+        self.table.setObjectName("ShortcutTable")
+        self.table.setHorizontalHeaderLabels([tr("Category"), tr("Action"), tr("Shortcut")])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setMouseTracking(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setShowGrid(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.table.setColumnWidth(2, 180)
+
+        shortcuts = load_shortcuts()
+        for row, item in enumerate(SHORTCUT_ACTIONS):
+            action_id = str(item["id"])
+            category_item = QTableWidgetItem(tr(str(item["category"])))
+            action_item = QTableWidgetItem(tr(str(item["label"])))
+            self.table.setItem(row, 0, category_item)
+            self.table.setItem(row, 1, action_item)
+
+            editor = QKeySequenceEdit(self)
+            editor.setObjectName("ShortcutEditor")
+            editor.setMinimumWidth(150)
+            editor.setMinimumHeight(30)
+            editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            editor.setMaximumSequenceLength(1)
+            if hasattr(editor, "setClearButtonEnabled"):
+                editor.setClearButtonEnabled(True)
+            value = shortcuts.get(action_id, str(item["default"]))
+            if value:
+                editor.setKeySequence(QKeySequence(value))
+            editor.keySequenceChanged.connect(self._update_conflicts)
+            self._editors[action_id] = editor
+            self.table.setCellWidget(row, 2, editor)
+            self.table.setRowHeight(row, 40)
+
+        layout.addWidget(self.table, 1)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
+        layout.addWidget(self.status_label)
+
+        buttons = QHBoxLayout()
+        reset_btn = QPushButton(tr("Reset All"))
+        reset_btn.clicked.connect(self.reset_to_defaults)
+        buttons.addWidget(reset_btn)
+        buttons.addStretch()
+
+        cancel_btn = QPushButton(tr("Cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(cancel_btn)
+
+        self.done_btn = QPushButton(tr("Done"))
+        self.done_btn.setObjectName("PrimaryButton")
+        self.done_btn.clicked.connect(self.save_and_accept)
+        buttons.addWidget(self.done_btn)
+        layout.addLayout(buttons)
+
+        self._update_conflicts()
+
+    def _current_shortcuts(self) -> dict[str, str]:
+        shortcuts = {}
+        for action_id, editor in self._editors.items():
+            shortcuts[action_id] = editor.keySequence().toString(QKeySequence.PortableText).strip()
+        return shortcuts
+
+    def _conflicts(self) -> dict[str, list[str]]:
+        by_key: dict[str, list[str]] = {}
+        labels = {str(item["id"]): tr(str(item["label"])) for item in SHORTCUT_ACTIONS}
+        for action_id, shortcut in self._current_shortcuts().items():
+            key = _shortcut_compare_key(shortcut)
+            if key:
+                by_key.setdefault(key, []).append(labels.get(action_id, action_id))
+        return {key: names for key, names in by_key.items() if len(names) > 1}
+
+    def _update_conflicts(self):
+        conflicts = self._conflicts()
+        has_conflicts = bool(conflicts)
+        self.done_btn.setEnabled(not has_conflicts)
+        if not has_conflicts:
+            self.status_label.clear()
+            self.status_label.setVisible(False)
+            return
+        lines = []
+        for names in conflicts.values():
+            lines.append(tr("Shortcut conflict: {}").format(", ".join(names)))
+        self.status_label.setText("\n".join(lines))
+        self.status_label.setVisible(True)
+
+    def reset_to_defaults(self):
+        shortcuts = default_shortcuts()
+        for action_id, editor in self._editors.items():
+            value = shortcuts.get(action_id, "")
+            editor.setKeySequence(QKeySequence(value) if value else QKeySequence())
+        self._update_conflicts()
+
+    def save_and_accept(self):
+        if self._conflicts():
+            self._update_conflicts()
+            return
+        save_shortcuts(self._current_shortcuts())
+        self.accept()
+
 
 class URLInputDialog(QDialog):
     def __init__(self, parent=None):

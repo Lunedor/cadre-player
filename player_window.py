@@ -43,6 +43,7 @@ from .settings import (
     load_stream_quality,
     load_audio_delay,
     load_audio_delay_for_file,
+    load_shortcuts,
 )
 from .ui.icons import (
     icon_close,
@@ -243,6 +244,7 @@ class ProOverlayPlayer(QMainWindow, PlayerLogic, PlaylistViewMixin, UIEventsMixi
 
         self.saved_volume = load_volume()
         self.saved_muted = load_muted()
+        self._cadre_shortcuts = load_shortcuts()
 
         self.central_widget = QWidget()
         self.central_widget.setMouseTracking(True)
