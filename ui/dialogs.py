@@ -447,6 +447,16 @@ class VideoSettingsDialog(QDialog):
         rg_layout.addWidget(self.deband_range_label)
         deband_layout.addRow(tr("Range") + ":", rg_layout)
 
+        self.deband_grain_slider = NoWheelSlider(Qt.Horizontal)
+        self.deband_grain_slider.setRange(0, 16)
+        self.deband_grain_slider.setValue(config.get("deband_grain", 2))
+        self.deband_grain_label = QLabel(str(self.deband_grain_slider.value()))
+        self.deband_grain_slider.valueChanged.connect(lambda v: (self.deband_grain_label.setText(str(v)), self.update_video()))
+        gr_layout = QHBoxLayout()
+        gr_layout.addWidget(self.deband_grain_slider)
+        gr_layout.addWidget(self.deband_grain_label)
+        deband_layout.addRow(tr("Grain") + ":", gr_layout)
+
         content_layout.addWidget(deband_group)
 
         # HDR / Tone Mapping Group
@@ -764,6 +774,7 @@ class VideoSettingsDialog(QDialog):
         self.deband_iterations_slider.setValue(2)
         self.deband_threshold_slider.setValue(48)
         self.deband_range_slider.setValue(16)
+        self.deband_grain_slider.setValue(2)
         self.tone_combo.setCurrentIndex(0)
         self.normalize_check.setChecked(False)
         self.screenshot_dir_edit.setText(_get_default_screenshot_dir())
@@ -777,6 +788,7 @@ class VideoSettingsDialog(QDialog):
         self.deband_iterations_slider.setEnabled(enabled)
         self.deband_threshold_slider.setEnabled(enabled)
         self.deband_range_slider.setEnabled(enabled)
+        self.deband_grain_slider.setEnabled(enabled)
         self.update_video()
 
     def browse_screenshot_dir(self):
@@ -822,6 +834,7 @@ class VideoSettingsDialog(QDialog):
             "deband_iterations": self.deband_iterations_slider.value(),
             "deband_threshold": self.deband_threshold_slider.value(),
             "deband_range": self.deband_range_slider.value(),
+            "deband_grain": self.deband_grain_slider.value(),
             "tone_mapping": self.tone_combo.currentData(),
             "audio_normalize": self.normalize_check.isChecked(),
             "audio_filter": audio_filter,

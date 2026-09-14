@@ -1443,6 +1443,7 @@ class UIEventsMixin:
             self._set_mpv_property_safe("deband_iterations", config.get("deband_iterations", 2), allow_during_busy=True)
             self._set_mpv_property_safe("deband_threshold", config.get("deband_threshold", 48), allow_during_busy=True)
             self._set_mpv_property_safe("deband_range", config.get("deband_range", 16), allow_during_busy=True)
+            self._set_mpv_property_safe("deband_grain", config.get("deband_grain", 2), allow_during_busy=True)
             self._set_mpv_property_safe("tone_mapping", config.get("tone_mapping", "auto"), allow_during_busy=True)
             self._set_mpv_property_safe("screenshot_directory", config.get("screenshot_dir", ""), allow_during_busy=True)
             self._set_mpv_property_safe("screenshot_format", config.get("screenshot_format", "png"), allow_during_busy=True)

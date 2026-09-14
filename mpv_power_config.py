@@ -25,6 +25,7 @@ deband=yes
 deband-iterations=2
 deband-threshold=48
 deband-range=16
+deband-grain=2
 screenshot-format=png
 screenshot-high-bit-depth=yes
 tone-mapping=auto
@@ -123,6 +124,8 @@ def load_mpv_video_overrides(mpv_conf_path: str) -> dict:
                 overrides["deband_threshold"] = _clamp_int(value, 48, 0, 256)
             elif key == "deband-range":
                 overrides["deband_range"] = _clamp_int(value, 16, 1, 256)
+            elif key == "deband-grain":
+                overrides["deband_grain"] = _clamp_int(value, 2, 0, 16)
             elif key == "af":
                 overrides["audio_filter"] = value
                 if value.strip().lower() == "loudnorm":
@@ -143,7 +146,7 @@ def _format_mpv_video_override_value(key: str, value):
         return str(float(value))
     if key == "deband":
         return "yes" if bool(value) else "no"
-    if key in {"deband_iterations", "deband_threshold", "deband_range"}:
+    if key in {"deband_iterations", "deband_threshold", "deband_range", "deband_grain"}:
         return str(int(value))
     if key == "af":
         return str(value)
@@ -169,6 +172,7 @@ def save_mpv_video_overrides(mpv_conf_path: str, config: dict) -> None:
         "deband_threshold": "deband-threshold",
         "deband_range": "deband-range",
         "tone_mapping": "tone-mapping",
+        "deband_grain": "deband-grain",
         "screenshot_format": "screenshot-format",
         "audio_filter": "af",
     }

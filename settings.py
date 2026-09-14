@@ -229,6 +229,7 @@ VIDEO_DEBAND_KEY = "video/deband"
 VIDEO_DEBAND_ITERATIONS_KEY = "video/deband_iterations"
 VIDEO_DEBAND_THRESHOLD_KEY = "video/deband_threshold"
 VIDEO_DEBAND_RANGE_KEY = "video/deband_range"
+VIDEO_DEBAND_GRAIN_KEY = "video/deband_grain"
 VIDEO_TONE_MAPPING_KEY = "video/tone_mapping"
 SCREENSHOT_DIR_KEY = "video/screenshot_dir"
 SCREENSHOT_USE_DEFAULT_DIR_KEY = "video/screenshot_use_default_dir"
@@ -542,6 +543,7 @@ def load_video_settings():
         "deband_iterations": _to_int(settings.value(VIDEO_DEBAND_ITERATIONS_KEY, 2), 2, 1, 4),
         "deband_threshold": _to_int(settings.value(VIDEO_DEBAND_THRESHOLD_KEY, 48), 48, 0, 128),
         "deband_range": _to_int(settings.value(VIDEO_DEBAND_RANGE_KEY, 16), 16, 1, 64),
+        "deband_grain": _to_int(settings.value(VIDEO_DEBAND_GRAIN_KEY, 2), 2, 0, 16),
         "tone_mapping": _to_choice(
             settings.value(VIDEO_TONE_MAPPING_KEY, "auto"),
             "auto",
@@ -584,6 +586,7 @@ def save_video_settings(config: dict,
     if "deband_iterations" in config: settings.setValue(VIDEO_DEBAND_ITERATIONS_KEY, int(config["deband_iterations"]))
     if "deband_threshold" in config: settings.setValue(VIDEO_DEBAND_THRESHOLD_KEY, int(config["deband_threshold"]))
     if "deband_range" in config: settings.setValue(VIDEO_DEBAND_RANGE_KEY, int(config["deband_range"]))
+    if "deband_grain" in config: settings.setValue(VIDEO_DEBAND_GRAIN_KEY, int(config["deband_grain"]))
     if "tone_mapping" in config: settings.setValue(VIDEO_TONE_MAPPING_KEY, str(config["tone_mapping"]))
     if "screenshot_dir" in config: settings.setValue(SCREENSHOT_DIR_KEY, str(config["screenshot_dir"]))
     if "screenshot_use_default_dir" in config: settings.setValue(SCREENSHOT_USE_DEFAULT_DIR_KEY, bool(config["screenshot_use_default_dir"]))
