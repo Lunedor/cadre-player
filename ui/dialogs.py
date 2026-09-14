@@ -750,7 +750,7 @@ class VideoSettingsDialog(QDialog):
         self._pending_aspect = aspect_val
 
         self.player_window._mpv_conf_audio_filter = audio_filter
-        self.player_window.apply_video_settings()
+        self.player_window.apply_video_settings(config)
 
     def _save_and_accept(self):
         self.update_video()
@@ -762,6 +762,7 @@ class VideoSettingsDialog(QDialog):
         )
 
         save_aspect_ratio(self._pending_aspect)
+        self.player_window.apply_video_settings(self._pending_video_config)
 
         self.accept()
 
@@ -770,7 +771,7 @@ class VideoSettingsDialog(QDialog):
             self._original_video_config.get("audio_filter", "") or ""
         ).strip()
 
-        self.player_window.apply_video_settings()
+        self.player_window.apply_video_settings(self._original_video_config)
 
         self.player_window.set_aspect_ratio(
             self._original_aspect,

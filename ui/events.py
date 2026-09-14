@@ -1359,8 +1359,12 @@ class UIEventsMixin:
     def update_equalizer_gains(self, gains):
         self.apply_equalizer_settings()
 
-    def apply_video_settings(self):
-        config = load_video_settings()
+    def apply_video_settings(self, config=None):
+        if config is None:
+            config = load_video_settings()
+        else:
+            config = dict(config)
+        self._video_config = dict(config)
         try:
             self._set_mpv_property_safe("brightness", config.get("brightness", 0), allow_during_busy=True)
             self._set_mpv_property_safe("contrast", config.get("contrast", 0), allow_during_busy=True)
